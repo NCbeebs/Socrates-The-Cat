@@ -7,7 +7,8 @@ For installation and normal use, see the [repository README](../README.md). Run 
 | Command | Purpose |
 |---|---|
 | `npm ci` | Install the locked npm dependencies, including build tools |
-| `npm start` / `socrates` | Source launch with activity journal and diagnostics |
+| `npm link` | Once per checkout: register `socrates` on your `PATH` (see root README) |
+| `socrates` / `npm start` | Source launch with activity journal and diagnostics (`npm start` without linking) |
 | `npm run debug` / `socrates --debug` | Add HUD, surface outlines, structured debug records, and raw tool output |
 | `npm run tauri:dev` | Direct native development launch, without the journal launcher |
 | `npm run tauri:dev:debug` | Direct native launch with `HABITAT_DEBUG=1` |

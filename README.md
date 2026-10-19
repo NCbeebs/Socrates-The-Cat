@@ -38,12 +38,15 @@ Run these commands in the integrated terminal of the IDE where you want Socrates
 git clone https://github.com/NCbeebs/Socrates-The-Cat.git
 cd Socrates-The-Cat\companion
 npm ci
-npm start
+npm link
+socrates
 ```
+
+`npm link` registers the `socrates` command (run it once per checkout). Keep the repo and build tools installed; the launcher runs the app from source. If you move the checkout, run `npm link` again from `companion/`. Remove the global command with `npm unlink -g companion`.
 
 The first launch compiles the native app and can take several minutes. Keep an IDE window focused and the terminal open; press **Ctrl+C** to stop. Socrates follows foreground windows belonging to the launch IDE (all VS Code windows or all Cursor windows) and hides when you switch to another application.
 
-For a command you can run from any directory, run `npm link` once from `companion/`, then use `socrates`. Keep the checkout and development tools installed; this command runs the app from source. If you move the checkout, link it again. Remove the global command with `npm unlink -g companion`.
+Without linking, run `npm start` from `companion/` each session (same launcher, no global `socrates` on your `PATH`).
 
 From an external terminal, select the IDE explicitly:
 
