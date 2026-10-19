@@ -12,6 +12,18 @@ Built with **Tauri 2**, **Rust**, **TypeScript**, **Vite**, and **Windows UI Aut
 
 ![Batting and pouncing at the cursor](docs/images/socrates2.gif)
 
+The clips above focus on **everyday ledge life** and **cursor play**. Socrates also does the following on the real workbench (weighted at random unless noted):
+
+| Kind | What you might see |
+|------|---------------------|
+| **Movement** | Idle blinks; **walk** along tab strips and panel tops; **turn** at ledge ends. |
+| **Idle flavor** | **Groom** (three variants), **stretch**, **sit and look** at the cursor with head tracking. |
+| **Sleep** | Optional stretch → curl up → **dream** (birds, mice, or “maximum comfy”) → wake; poke him while napping for an **annoyed** reaction. |
+| **Layout** | **Fall** when a ledge disappears; **cling** on a moving horizontal split while you drag it; **slide** down a divider to a lower ledge; rare **portal** hop to another walkable ledge. |
+| **Pointer** (tiers) | **Look** and **alert** from farther away; **swipe** and **pounce** when the cursor is very close (see `socrates2.gif`). |
+
+All of this is driven by [`pet.json`](assets/pets/default-cat/pet.json) activities and clips—no extra setup.
+
 ## Preview status
 
 **Early preview.** Runs from source on **Windows** with **[VS Code](https://code.visualstudio.com/)** or **[Cursor](https://cursor.com/)**; there is no installer or IDE extension yet. Launch from an integrated terminal in the IDE you want—Socrates follows **that application’s** foreground windows for the session (all VS Code windows, or all Cursor windows—not a single locked HWND).
@@ -73,6 +85,10 @@ Normal runs show a live daily journal in the terminal as Socrates walks, grooms,
 socrates --debug
 ```
 
+Debug mode draws **walkable ledges** (green), **climbable / vertical edges** (orange), a **yellow box** around the cat’s pointer-reach area, and a **HUD** line (surface count, revision, motion phase, activity). The terminal also shows structured `DEBUG` geometry lines and `JOURNAL` behavior lines alongside the normal activity journal:
+
+![socrates --debug: ledge wireframes, pointer reach box, HUD, and terminal diagnostics](docs/images/debug.png)
+
 Use `socrates --help` for command help. Keep the terminal open while Socrates runs; press **Ctrl+C** to stop. From `companion/`, `npm run debug` also enables diagnostics.
 
 Example journal entries, based on actual activity changes:
@@ -123,7 +139,7 @@ README.md, LICENSE, CHANGELOG.md
 assets/pets/default-cat/   pet.json + clip PNGs
 companion/                 Tauri app and socrates launcher
 docs/architecture.md       How geometry, pointer, and logging fit together
-docs/images/               Demo GIFs (socrates3.gif, socrates2.gif, …)
+docs/images/               Demo GIFs, debug screenshot
 ```
 
 ## Documentation

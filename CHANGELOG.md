@@ -6,6 +6,7 @@ Notable changes only. Session notes and no-code reviews are omitted.
 
 ### Docs
 
+- README demo table for behaviors not shown in GIFs; debug screenshot in troubleshooting
 - README roadmap narrowed to refined animations and Linux/Mac support.
 
 ### Public release prep
