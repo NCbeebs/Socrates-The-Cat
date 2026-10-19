@@ -7,8 +7,10 @@ Socrates is a **click-through overlay** on top of **VS Code or Cursor** (Windows
 | Layer | Role |
 |-------|------|
 | `bin/socrates.js` | Launcher, terminal journal, log files under `%LOCALAPPDATA%\Socrates\logs` |
-| `src/` + `src/pet/` | Vite/TypeScript UI: SVG pet renderer, `HabitatPet` state machine |
-| `src-tauri/` | Tauri 2 host: transparent always-on-top window, UIA geometry, pointer sampling |
+| `src/` + `src/pet/` | Vite 8 / TypeScript 6 UI: SVG pet renderer, `HabitatPet` state machine |
+| `src-tauri/` | Tauri 2 / Rust host: WebView2, transparent always-on-top window, UIA geometry, pointer sampling |
+
+Native dependencies include `uiautomation` for layout inspection, `windows` for Win32 calls, `sysinfo` for process discovery, `serde` / `serde_json` for IPC and logs, and `chrono` for log timestamps. Exact dependency versions are recorded in `companion/package-lock.json` and `companion/src-tauri/Cargo.lock`.
 
 Pet art and behavior live in [`assets/pets/default-cat/pet.json`](../assets/pets/default-cat/pet.json) (clip sheets + weighted activities).
 
@@ -23,7 +25,7 @@ Rust [`surface_mapper.rs`](../companion/src-tauri/src/surface_mapper.rs) polls U
 
 Defaults and env flags: [`habitat_config.rs`](../companion/src-tauri/src/habitat_config.rs), `HABITAT_IDE_HOST` in [`ide_host.rs`](../companion/src-tauri/src/ide_host.rs). UIA resolves the **exact** tracked HWND (no same-PID largest-window fallback). Set `HABITAT_LIVE_UIA=0` and `HABITAT_SURFACES_PATH` only if you use a static surfaces JSON file.
 
-The overlay window is created with `visible: false`, `focus: false`, and `focusable: false`; it is shown after positioning on the IDE bounds. The pet loop uses a single monotonic clock (`pet-loop-clock.js`) with a visibility-gated `requestAnimationFrame` fallback.
+The overlay window is created with `visible: false`, `focus: false`, and `focusable: false`; it is shown after positioning on the IDE bounds. The pet loop uses a single monotonic clock ([`pet-loop-clock.ts`](../companion/src/pet-loop-clock.ts)) and a visibility-gated timer fallback when `requestAnimationFrame` stalls.
 
 ## Pointer
 
@@ -48,4 +50,12 @@ The launcher shows structured `debug` lines in the terminal when `HABITAT_DEBUG_
 
 ## Tests
 
-From `companion/`: `npm test`, `npm run build`. Native unit tests: `cargo test` in `src-tauri/`.
+From `companion/`: `npm test`, `npm run build`, and `cargo test --locked --manifest-path src-tauri/Cargo.toml`. The frontend build does not build the native executable.
+
+## Security and privacy boundaries
+
+The UIA mapper reads element types, class names, and bounding rectangles; it does not request editor text or input values. Pointer sampling uses `GetCursorPos` without injecting input. The application has no telemetry or upload implementation.
+
+Native commands expose geometry, presentation flags, pointer coordinates, and bounded log entries. Static geometry is read only from the shell-configured path. The webview uses local content, Tauri capabilities, and separate development/production CSPs in [`tauri.conf.json`](../companion/src-tauri/tauri.conf.json).
+
+Normal source launches include a localhost Vite server bound to localhost by default. Vite `server.fs.allow` is limited to the companion package and `assets/pets/default-cat/` (sprites and manifest), not the whole repository. Local diagnostic files may still contain paths and error details; review them before sharing. See the [developer guide](../companion/README.md) for retention and development settings.

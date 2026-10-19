@@ -38,7 +38,8 @@ export default defineConfig(() => ({
       ignored: ["**/src-tauri/**"],
     },
     fs: {
-      allow: [".."],
+      // Companion sources plus default-cat sprites (pet-clips glob); not the whole repo.
+      allow: [rootDir, petDir],
     },
   },
 }));

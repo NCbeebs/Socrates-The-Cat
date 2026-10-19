@@ -148,12 +148,37 @@ fn append(directory: &Path, day: &str, line: &str) -> io::Result<()> {
         .write_all(line.as_bytes())
 }
 
+/// Matches only Socrates runtime journals: `journal-YYYY-MM-DD.jsonl` and `.1`–`.3` rotations.
+fn is_socrates_journal_file_name(name: &str) -> bool {
+    const PREFIX: &str = "journal-";
+    const SUFFIX: &str = ".jsonl";
+    if !name.starts_with(PREFIX) || !name.ends_with(SUFFIX) {
+        return false;
+    }
+    let core = &name[PREFIX.len()..name.len() - SUFFIX.len()];
+    let date = match core.rsplit_once('.') {
+        Some((d, rot)) if (rot == "1" || rot == "2" || rot == "3") => d,
+        Some((_, _)) => return false,
+        None => core,
+    };
+    is_journal_date_token(date)
+}
+
+fn is_journal_date_token(s: &str) -> bool {
+    if s.len() != 10 {
+        return false;
+    }
+    let b = s.as_bytes();
+    b[4] == b'-' && b[7] == b'-' && b.iter().enumerate().all(|(i, c)| {
+        matches!(i, 4 | 7) || c.is_ascii_digit()
+    })
+}
+
 fn cleanup(directory: &Path) -> io::Result<()> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("journal-")
-            && name.ends_with(".jsonl")
+        if is_socrates_journal_file_name(&name)
             && entry.file_type()?.is_file()
             && entry.metadata()?.modified()?.elapsed().unwrap_or_default() > RETENTION
         {
@@ -330,5 +355,16 @@ mod tests {
         append(&directory, "2026-10-19", "new day\n").unwrap();
         assert!(directory.join("journal-2026-10-19.jsonl").exists());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn journal_cleanup_recognizes_only_socrates_filenames() {
+        assert!(is_socrates_journal_file_name("journal-2026-10-19.jsonl"));
+        assert!(is_socrates_journal_file_name("journal-2026-10-19.1.jsonl"));
+        assert!(is_socrates_journal_file_name("journal-2026-10-19.3.jsonl"));
+        assert!(!is_socrates_journal_file_name("journal-marker.jsonl"));
+        assert!(!is_socrates_journal_file_name("journal-2026-10-19.4.jsonl"));
+        assert!(!is_socrates_journal_file_name("journal-not-a-date.jsonl"));
+        assert!(!is_socrates_journal_file_name("launcher-2026-10-19.jsonl"));
     }
 }
