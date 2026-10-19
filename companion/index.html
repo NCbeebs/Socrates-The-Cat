@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Socrates the Cat</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div id="hud" hidden></div>
+    <!-- SVG: reliable on transparent WebView2; canvas strokes often do not composite on Windows. -->
+    <svg id="overlay-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+  </body>
+</html>

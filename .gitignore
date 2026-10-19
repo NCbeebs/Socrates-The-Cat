@@ -1,0 +1,45 @@
+# Secrets (never commit)
+.env
+.env.*
+**/.env
+**/.env.*
+**/secrets/
+credentials.json
+*.pem
+*.pfx
+*.key
+id_rsa*
+
+# Habitat companion: set HABITAT_* in the shell or npm scripts (see README.md).
+# Do not commit .env for HABITAT_DEBUG / geometry flags — use `npm run tauri:dev:debug` or $env:HABITAT_DEBUG.
+
+# Machine-local geometry (UIA/surfaces; may include window titles in JSON)
+out/
+
+# Scratch / local-only
+private/
+**/local-only/
+
+# Cursor IDE (local rules, skills pointers — not part of the published repo)
+.cursor/
+
+# Dependencies & build
+node_modules/
+dist/
+dist-ssr/
+*.vsix
+
+# Rust / Tauri (workspace + companion frontend build output)
+target/
+**/target/
+companion/dist/
+
+# OS & editor noise
+.DS_Store
+Thumbs.db
+*.log
+
+# Tauri / frontend local overrides
+*.local
+/reference art
+**/_unshipped/

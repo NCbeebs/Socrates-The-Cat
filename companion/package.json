@@ -1,0 +1,40 @@
+{
+  "name": "companion",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "General Chromodynamics <generalchromodynamics@protonmail.com>",
+  "homepage": "https://generalchromodynamics.com/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NCbeebs/Socrates-The-Cat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NCbeebs/Socrates-The-Cat/issues",
+    "email": "generalchromodynamics@protonmail.com"
+  },
+  "type": "module",
+  "bin": {
+    "socrates": "bin/socrates.js"
+  },
+  "scripts": {
+    "start": "node bin/socrates.js",
+    "debug": "node bin/socrates.js --debug",
+    "test": "node --experimental-strip-types --test tests/*.test.cjs tests/*.test.mjs",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:dev:debug": "cross-env HABITAT_DEBUG=1 tauri dev"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "cross-env": "^7.0.3",
+    "typescript": "~6.0.3",
+    "vite": "^8.0.16"
+  }
+}
