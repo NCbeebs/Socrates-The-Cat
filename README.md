@@ -12,7 +12,11 @@ A desktop cat that walks the real tab strips, panel edges, and status bar in **V
 
 ![Batting and pouncing at the cursor](docs/images/socrates2.gif)
 
-Socrates also walks and turns at ledge ends, stretches, looks toward the pointer, clings to moving horizontal splits, slides down dividers, and occasionally travels through a portal. Activities and animation clips are defined in [`pet.json`](assets/pets/default-cat/pet.json).
+**Portal hop** (rare—emerges on another walkable ledge):
+
+![Walking through a portal to another ledge](docs/images/socrates1.gif)
+
+He also walks and turns at ledge ends, stretches, grooms, sits and looks at the pointer, clings to moving horizontal splits, and slides down dividers. Activities and clips are in [`pet.json`](assets/pets/default-cat/pet.json).
 
 ## Requirements
 
