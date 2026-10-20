@@ -7,18 +7,36 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { createLogStore, localDate } from "./log-storage.js";
+import { checkForUpstreamUpdate, formatCheckUpdatesCli, sanitizeForTerminal } from "./check-updates.js";
 
 const args = process.argv.slice(2);
+const debug = args.includes("--debug");
+const checkUpdatesOnly = args.includes("--check-updates");
+const unknown = args.filter((a) => a !== "--debug" && a !== "--check-updates");
 
 if (args.length === 1 && ["--help", "-h"].includes(args[0])) {
   console.log(
-    "Usage: socrates [--debug]\n\nLaunch Socrates' daily journal from this checkout.\n  --debug  Verbose diagnostics, HUD, surface wireframes, and raw development output\n\nLogs (14-day retention):\n  journal-*.jsonl     runtime (@socrates-log from the app)\n  launcher-*.jsonl    this terminal session\n  development-*.log   raw tool output (always saved)\n\nKeep this terminal open; press Ctrl+C to stop.",
+    "Usage: socrates [--debug] [--check-updates]\n\nLaunch Socrates' daily journal from this checkout.\n  --debug           Verbose diagnostics, HUD, surface wireframes, and raw development output\n  --check-updates   Compare this checkout to upstream main on GitHub (no launch)\n\nOptional update notice on launch (opt-in, PowerShell):\n  $env:SOCRATES_CHECK_UPDATES = \"1\"\n  GitHub receives your local commit SHA and your IP; cached 24h under %LOCALAPPDATA%\\Socrates\\.\n\nLogs (14-day retention):\n  journal-*.jsonl     runtime (@socrates-log from the app)\n  launcher-*.jsonl    this terminal session\n  development-*.log   raw tool output (always saved)\n\nKeep this terminal open; press Ctrl+C to stop.",
   );
-} else if (args.length > 1 || (args.length === 1 && args[0] !== "--debug")) {
-  console.error("Unknown arguments. Usage: socrates [--debug]");
+} else if (unknown.length > 0) {
+  console.error("Unknown arguments. Usage: socrates [--debug] [--check-updates]");
   process.exitCode = 1;
+} else if (checkUpdatesOnly && debug) {
+  console.error("Use --check-updates alone (without --debug) to check for updates without launching.");
+  process.exitCode = 1;
+} else if (checkUpdatesOnly) {
+  runCheckUpdatesCli();
 } else {
   launch();
+}
+
+async function runCheckUpdatesCli() {
+  const result = await checkForUpstreamUpdate({
+    companionPackageDir: fileURLToPath(new URL("../", import.meta.url)),
+    force: true,
+  });
+  console.log(formatCheckUpdatesCli(result));
+  process.exitCode = result.kind === "failed" ? 1 : 0;
 }
 
 function envTruthy(name) {
@@ -29,7 +47,6 @@ function envTruthy(name) {
 }
 
 function launch() {
-  const debug = args.includes("--debug");
   const showRawDevOutput = debug;
   const showStructuredDiagnostics = debug || envTruthy("HABITAT_DEBUG_LOG");
   const session = randomUUID();
@@ -75,9 +92,24 @@ function launch() {
   }
 
   if (cli) {
+    const companionPackageDir = fileURLToPath(new URL("../", import.meta.url));
+    const updateAbort = new AbortController();
     // Resolve from the launcher, since a globally linked command can run anywhere.
     if (process.env.HABITAT_IDE_HOST?.trim()) {
       log("info", "ide_host", `Using HABITAT_IDE_HOST=${process.env.HABITAT_IDE_HOST.trim()} from environment.`);
+    }
+    if (envTruthy("SOCRATES_CHECK_UPDATES")) {
+      setImmediate(() => {
+        checkForUpstreamUpdate({ companionPackageDir, signal: updateAbort.signal })
+          .then((result) => {
+            if (result.kind === "update_available" && !updateAbort.signal.aborted) {
+              log("warn", "update_available", sanitizeForTerminal(result.message));
+            }
+          })
+          .catch(() => {
+            /* checkForUpstreamUpdate does not throw; guard launch either way. */
+          });
+      });
     }
     log("info", "starting", "Getting Socrates ready. The first build may take a moment.");
     const child = spawn(process.execPath, [cli, "dev"], {
@@ -144,6 +176,7 @@ function launch() {
     const stop = () => {
       if (stopping) return;
       stopping = true;
+      updateAbort.abort();
       log("info", "stopping", "Socrates is signing off.");
       if (!child.pid) return;
       if (process.platform === "win32") {
@@ -171,10 +204,13 @@ function launch() {
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
     child.on("error", (error) => {
+      updateAbort.abort();
       log("error", "launch_failed", `Could not launch Socrates: ${error.message}`, error.stack);
       process.exitCode = 1;
     });
     child.on("close", (code, signal) => {
+      // A pending update request must not keep the launcher alive after Socrates exits.
+      updateAbort.abort();
       clearTimeout(killTimer);
       process.removeListener("SIGINT", stop);
       process.removeListener("SIGTERM", stop);

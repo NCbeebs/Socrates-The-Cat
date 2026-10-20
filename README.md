@@ -48,6 +48,27 @@ The first launch compiles the native app and can take several minutes. Keep an I
 
 Without linking, run `npm start` from `companion/` each session (same launcher, no global `socrates` on your `PATH`).
 
+### Updating
+
+From your clone root (not `companion/`):
+
+```powershell
+git pull --ff-only
+cd companion
+npm ci    # when package-lock.json changed
+```
+
+Stop Socrates (**Ctrl+C** in the launcher terminal) before pulling. If `git pull --ff-only` refuses, your clone has local commits that upstream doesn't; decide how to keep them before updating. Restart with `socrates` when done; the next native build runs automatically if Rust changed.
+
+**Optional update notice (opt-in):** enable it before launch:
+
+```powershell
+$env:SOCRATES_CHECK_UPDATES = "1"
+socrates
+```
+
+On `main` only, the launcher compares your checkout to [upstream `main`](https://github.com/NCbeebs/Socrates-The-Cat) via the GitHub API (your commit SHA and IP are sent; results cache for 24 hours under `%LOCALAPPDATA%\Socrates\`). Or run `socrates --check-updates` without starting the app. For email when tagged releases ship, watch the repo on GitHub (**Watch → Releases**).
+
 From an external terminal, select the IDE explicitly:
 
 ```powershell
