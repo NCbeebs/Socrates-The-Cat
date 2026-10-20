@@ -769,11 +769,25 @@ export class HabitatPet {
     }
 
     if (!ledges.length && !inCling && this.motionPhase !== "slide") {
-      this.finishPortal();
-      this.cancelPointerReactionPlayback();
-      this.motionPhase = "await_geometry";
-      this.tickPointerReachBookkeeping(this.frameValidatedPointer);
-      return this.toDrawState(scale, sx, sy);
+      // UIA can briefly yield zero walkable ledges after HWND/size churn. Do not
+      // demote `falling` → `await_geometry` here: that skips `tickFallAnimation`,
+      // and the next frame can promote to `grounded` on attachment while `fallPhase`
+      // is still `land` — frozen on the fall sheet (`main.ts` journal stuck on falling).
+      if (this.motionPhase === "falling") {
+        if (this.fallPhase !== "land") {
+          this.stepFall(ledges, dt);
+        }
+        this.tickFallAnimation(dtMs);
+        this.tickPointerReachBookkeeping(this.frameValidatedPointer);
+        return this.toDrawState(scale, sx, sy);
+      }
+      if (!this.attachment) {
+        this.finishPortal();
+        this.cancelPointerReactionPlayback();
+        this.motionPhase = "await_geometry";
+        this.tickPointerReachBookkeeping(this.frameValidatedPointer);
+        return this.toDrawState(scale, sx, sy);
+      }
     }
 
     if (this.portalPhase !== "awake") {
@@ -799,7 +813,19 @@ export class HabitatPet {
     }
 
     if (this.motionPhase === "await_geometry" && this.awaitGeometryMs <= 0) {
-      this.motionPhase = this.attachment ? "grounded" : "falling";
+      if (this.attachment) {
+        if (this.fallPhase !== null) {
+          this.completeFallLanding();
+        } else {
+          this.motionPhase = "grounded";
+        }
+      } else {
+        this.motionPhase = "falling";
+      }
+    }
+
+    if (this.motionPhase === "grounded" && this.fallPhase !== null) {
+      this.completeFallLanding();
     }
 
     if (
@@ -1350,6 +1376,9 @@ export class HabitatPet {
       this.motionPhase === "falling" ||
       this.dividerSlidePhase !== "awake"
     ) {
+      return;
+    }
+    if (!ledges.length && this.attachment) {
       return;
     }
     if (this.groundedSupportStillValid(ledges)) {
@@ -2448,6 +2477,13 @@ export class HabitatPet {
     const ledge = this.ledgeFromAttachment(ledges);
     if (!ledge) {
       this.finishPortal();
+      if (
+        this.attachment &&
+        (this.motionPhase === "grounded" ||
+          (this.motionPhase === "falling" && this.fallPhase === "land"))
+      ) {
+        return;
+      }
       if (this.attachment && this.motionPhase !== "await_geometry") {
         this.beginFall();
       } else if (!this.attachment && this.awaitGeometryMs <= 0) {

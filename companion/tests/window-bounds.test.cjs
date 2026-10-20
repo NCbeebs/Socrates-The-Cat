@@ -262,6 +262,31 @@ test("all animation pivots and pounce contacts fit at every corner in both direc
   }
 });
 
+test("fall landing finishes when walkable ledges drop out during the land clip", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const floor = surface("floor", 0, 1600, 500);
+  update(pet, [floor], viewport);
+  pet.localX = 400;
+  pet.localY = 100;
+  pet.beginFall();
+  let landed = false;
+  for (let i = 0; i < 400; i++) {
+    update(pet, [floor], viewport);
+    if (pet.fallPhase === "land") {
+      landed = true;
+      break;
+    }
+  }
+  assert.ok(landed, "fall should reach ledge contact and enter land phase");
+  for (let i = 0; i < 200; i++) {
+    update(pet, [], viewport);
+  }
+  assert.equal(pet.motionPhase, "grounded");
+  assert.equal(pet.fallPhase, null);
+  assert.equal(pet.animationKey, "idle");
+});
+
 test("resizing and nonuniform DPI mapping constrain active falls, even without geometry", () => {
   const pet = makePet();
   update(pet, [surface("floor", 0, 1600, 1000)], { w: 1600, h: 1100 });
