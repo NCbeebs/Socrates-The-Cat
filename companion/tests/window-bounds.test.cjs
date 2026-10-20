@@ -54,6 +54,21 @@ function update(pet, surfaces, viewport, sx = 1, sy = sx, dt = 16, pointer = nul
   return pet.update(dt, surfaces, sx, sy, viewport, pointer, 1, meta);
 }
 
+const GRAVITY_LOCAL = 1400;
+const LEGACY_FALL_FOOT_TOLERANCE_PX = 8;
+
+/** Foot Y after one `stepFall` integration step (matches `habitat-pet.ts`). */
+function fallStepEndY(y0, vy0, dtMs) {
+  const dt = dtMs / 1000;
+  const vy = vy0 + GRAVITY_LOCAL * dt;
+  return y0 + vy * dt;
+}
+
+/** Old contact handler rejected landings when the foot overshot the ledge Y in one step. */
+function legacyFallFootContactRejected(y1, ledgeY, tolerance = LEGACY_FALL_FOOT_TOLERANCE_PX) {
+  return Math.abs(y1 - ledgeY) > tolerance;
+}
+
 function assertInside(state, viewport) {
   const [fw, fh] = manifest.habitat.grid.frameSize;
   assert.ok(Math.round(state.x) >= 0, `left edge: ${state.x}`);
@@ -260,6 +275,162 @@ test("all animation pivots and pounce contacts fit at every corner in both direc
       }
     }
   }
+});
+
+test("fall land clip completes when contact ledge is omitted but other walkable ledges remain", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const floor = surface("floor", 0, 1600, 500);
+  const decoy = surface("decoy", 0, 1600, 700);
+  update(pet, [floor, decoy], viewport);
+  pet.motionPhase = "falling";
+  pet.fallPhase = "land";
+  pet.activityId = "idle";
+  pet.animationKey = "fall";
+  pet.localX = 400;
+  pet.localY = 500;
+  pet.frameIndex = pet.fallLandStartFrameIndex();
+  pet.frameAccumulator = 0;
+  pet.attachment = { kind: "ledge", surfaceId: floor.id, t: 0.25 };
+  for (let i = 0; i < 200; i++) {
+    update(pet, [decoy], viewport);
+    if (pet.motionPhase === "grounded" && pet.fallPhase === null) {
+      break;
+    }
+  }
+  assert.equal(pet.motionPhase, "grounded");
+  assert.equal(pet.fallPhase, null);
+  assert.equal(pet.animationKey, "idle");
+  assert.equal(pet.attachment?.kind, "ledge");
+  assert.equal(pet.attachment?.surfaceId, floor.id);
+  assert.equal(pet.localY, 500);
+});
+
+test("brief missing grounded ledge restores original attachment without re-homing", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const floor = surface("floor", 0, 1600, 500);
+  const other = surface("other", 0, 1600, 520);
+  update(pet, [floor, other], viewport);
+  pet.motionPhase = "grounded";
+  pet.localX = 400;
+  pet.localY = 500;
+  pet.attachment = { kind: "ledge", surfaceId: floor.id, t: 0.25 };
+  update(pet, [other], viewport, 1, 1, 16);
+  assert.equal(pet.attachment?.surfaceId, floor.id);
+  assert.equal(pet.localY, 500);
+  update(pet, [floor, other], viewport);
+  assert.equal(pet.attachment?.surfaceId, floor.id);
+  assert.equal(pet.localY, 500);
+});
+
+for (const dtMs of [16, 16.67, 33, 48]) {
+  test(`fall lands on crossing when one step overshoots ledge Y by >${LEGACY_FALL_FOOT_TOLERANCE_PX}px (dt=${dtMs}ms)`, () => {
+    const ledgeY = 400;
+    const y0 = 390;
+    const vy0 = 1200;
+    const y1 = fallStepEndY(y0, vy0, dtMs);
+    assert.ok(
+      legacyFallFootContactRejected(y1, ledgeY),
+      `expected legacy contact rejection at y1=${y1.toFixed(2)} ledgeY=${ledgeY}`,
+    );
+
+    const pet = makePet();
+    const viewport = { w: 1600, h: 1100 };
+    const shelf = surface("shelf", 100, 900, ledgeY);
+    update(pet, [shelf], viewport);
+    pet.beginFall();
+    pet.localX = 500;
+    pet.localY = y0;
+    pet.vyLocal = vy0;
+    pet.fallPhase = "airborne";
+    update(pet, [shelf], viewport, 1, 1, dtMs);
+
+    assert.equal(
+      pet.localY,
+      ledgeY,
+      "foot should snap to ledge Y despite overshoot",
+    );
+    assert.equal(pet.fallPhase, "land");
+    assert.equal(pet.attachment?.kind, "ledge");
+    assert.equal(pet.attachment?.surfaceId, shelf.id);
+  });
+}
+
+test("attachment missing timer resets after landing so a brief gap does not instant re-home", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const oldLedge = surface("old", 0, 1600, 500);
+  const landing = surface("landing", 0, 1600, 600);
+  const distant = surface("distant", 0, 1600, 800);
+  update(pet, [oldLedge], viewport);
+  pet.motionPhase = "grounded";
+  pet.localX = 400;
+  pet.localY = 500;
+  pet.attachment = { kind: "ledge", surfaceId: oldLedge.id, t: 0.25 };
+  for (let i = 0; i < 49; i++) {
+    update(pet, [distant], viewport, 1, 1, 16);
+  }
+  assert.equal(pet.attachmentLedgeMissingMs, 784);
+
+  pet.beginFall();
+  pet.localX = 400;
+  pet.localY = 550;
+  for (let i = 0; i < 120; i++) {
+    update(pet, [landing, distant], viewport);
+    if (pet.fallPhase === "land") {
+      break;
+    }
+  }
+  for (let i = 0; i < 120; i++) {
+    update(pet, [landing, distant], viewport);
+    if (pet.motionPhase === "grounded") {
+      break;
+    }
+  }
+  assert.equal(pet.attachment?.surfaceId, landing.id);
+  assert.equal(pet.localY, 600);
+  assert.equal(pet.attachmentLedgeMissingMs, 0);
+
+  update(pet, [distant], viewport, 1, 1, 16);
+  assert.equal(pet.attachment?.surfaceId, landing.id);
+  assert.equal(pet.localY, 600);
+});
+
+test("grounded cat re-homes when attachment ledge id is missing but other ledges remain", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const gone = surface("gone", 0, 1600, 500);
+  update(pet, [gone], viewport);
+  pet.motionPhase = "grounded";
+  pet.localX = 400;
+  pet.localY = 500;
+  pet.attachment = { kind: "ledge", surfaceId: gone.id, t: 0.25 };
+  const replacement = surface("replacement", 0, 1600, 520);
+  for (let i = 0; i < 60; i++) {
+    update(pet, [replacement], viewport, 1, 1, 16);
+  }
+  assert.equal(pet.motionPhase, "grounded");
+  assert.equal(pet.attachment?.kind, "ledge");
+  assert.equal(pet.attachment?.surfaceId, replacement.id);
+  assert.equal(pet.localY, 520);
+});
+
+test("fall recovery snaps when airborne below every ledge after timeout", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const shelf = surface("shelf", 0, 1600, 400);
+  update(pet, [shelf], viewport);
+  pet.beginFall();
+  pet.localX = 500;
+  pet.localY = 450;
+  pet.vyLocal = 80;
+  pet.fallPhase = "airborne";
+  pet.fallAirborneMs = 2799;
+  update(pet, [shelf], viewport, 1, 1, 16);
+  assert.equal(pet.localY, 400);
+  assert.equal(pet.fallPhase, "land");
+  assert.equal(pet.attachment?.surfaceId, shelf.id);
 });
 
 test("fall landing finishes when walkable ledges drop out during the land clip", () => {
