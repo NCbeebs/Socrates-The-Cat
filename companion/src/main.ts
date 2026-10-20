@@ -11,7 +11,6 @@ import {
 import { petClipUrls } from "./pet/pet-clips";
 import { ActivityJournal } from "./journal";
 import { createPetLoopClock } from "./pet-loop-clock";
-import { setFallProbeSink } from "./pet/fall-probe";
 import {
   writeLog,
   writeDebug,
@@ -213,12 +212,8 @@ async function renderLoop(svg: SVGSVGElement, hud: HTMLElement) {
   const renderStartedAt = performance.now();
 
   const manifest = petManifest as unknown as PetManifest;
-  setFallProbeSink((source, event, message) => {
-    writeDebug(source, event, message);
-  });
   const pet = new HabitatPet(manifest, petClipUrls());
   pet.setPointerDebugEnabled(showPointerDebug);
-  pet.setFallProbeEnabled(verboseLog);
   let drawPet: (state: PetDrawState) => void;
   try {
     const clipUrls = await pet.preload();

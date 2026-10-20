@@ -18,6 +18,7 @@ function loadTypeScript(filename) {
 const habitatPetModule = loadTypeScript(path.resolve(__dirname, "../src/pet/habitat-pet.ts"));
 const {
   HabitatPet,
+  HABITAT_WINDOW_FLOOR_LEDGE_ID,
   buildSitLookAngleKeyframes,
   stepSitLookGazeCell,
   nearestSitLookGazeCell,
@@ -50,8 +51,27 @@ function makePet() {
   return pet;
 }
 
-function update(pet, surfaces, viewport, sx = 1, sy = sx, dt = 16, pointer = null) {
-  return pet.update(dt, surfaces, sx, sy, viewport, pointer, 1, meta);
+function liveMeta(targetHwnd, scanSequence = 1) {
+  return {
+    observedAtMs: Date.now(),
+    targetHwnd,
+    scanSequence,
+    surfaceSource: "live",
+  };
+}
+
+function update(
+  pet,
+  surfaces,
+  viewport,
+  sx = 1,
+  sy = sx,
+  dt = 16,
+  pointer = null,
+  revision = 1,
+  geometryMeta = meta,
+) {
+  return pet.update(dt, surfaces, sx, sy, viewport, pointer, revision, geometryMeta);
 }
 
 const GRAVITY_LOCAL = 1400;
@@ -316,10 +336,11 @@ test("brief missing grounded ledge restores original attachment without re-homin
   pet.localX = 400;
   pet.localY = 500;
   pet.attachment = { kind: "ledge", surfaceId: floor.id, t: 0.25 };
-  update(pet, [other], viewport, 1, 1, 16);
+  update(pet, [other], viewport, 1, 1, 16, null, 2);
+  assert.equal(pet.motionPhase, "await_geometry");
   assert.equal(pet.attachment?.surfaceId, floor.id);
   assert.equal(pet.localY, 500);
-  update(pet, [floor, other], viewport);
+  update(pet, [floor, other], viewport, 1, 1, 16, null, 3);
   assert.equal(pet.attachment?.surfaceId, floor.id);
   assert.equal(pet.localY, 500);
 });
@@ -357,47 +378,7 @@ for (const dtMs of [16, 16.67, 33, 48]) {
   });
 }
 
-test("attachment missing timer resets after landing so a brief gap does not instant re-home", () => {
-  const pet = makePet();
-  const viewport = { w: 1600, h: 1100 };
-  const oldLedge = surface("old", 0, 1600, 500);
-  const landing = surface("landing", 0, 1600, 600);
-  const distant = surface("distant", 0, 1600, 800);
-  update(pet, [oldLedge], viewport);
-  pet.motionPhase = "grounded";
-  pet.localX = 400;
-  pet.localY = 500;
-  pet.attachment = { kind: "ledge", surfaceId: oldLedge.id, t: 0.25 };
-  for (let i = 0; i < 49; i++) {
-    update(pet, [distant], viewport, 1, 1, 16);
-  }
-  assert.equal(pet.attachmentLedgeMissingMs, 784);
-
-  pet.beginFall();
-  pet.localX = 400;
-  pet.localY = 550;
-  for (let i = 0; i < 120; i++) {
-    update(pet, [landing, distant], viewport);
-    if (pet.fallPhase === "land") {
-      break;
-    }
-  }
-  for (let i = 0; i < 120; i++) {
-    update(pet, [landing, distant], viewport);
-    if (pet.motionPhase === "grounded") {
-      break;
-    }
-  }
-  assert.equal(pet.attachment?.surfaceId, landing.id);
-  assert.equal(pet.localY, 600);
-  assert.equal(pet.attachmentLedgeMissingMs, 0);
-
-  update(pet, [distant], viewport, 1, 1, 16);
-  assert.equal(pet.attachment?.surfaceId, landing.id);
-  assert.equal(pet.localY, 600);
-});
-
-test("grounded cat re-homes when attachment ledge id is missing but other ledges remain", () => {
+test("missing grounded ledge begins fall instead of re-homing to another ledge", () => {
   const pet = makePet();
   const viewport = { w: 1600, h: 1100 };
   const gone = surface("gone", 0, 1600, 500);
@@ -407,30 +388,64 @@ test("grounded cat re-homes when attachment ledge id is missing but other ledges
   pet.localY = 500;
   pet.attachment = { kind: "ledge", surfaceId: gone.id, t: 0.25 };
   const replacement = surface("replacement", 0, 1600, 520);
-  for (let i = 0; i < 60; i++) {
-    update(pet, [replacement], viewport, 1, 1, 16);
+  update(pet, [replacement], viewport, 1, 1, 16, null, 2);
+  assert.equal(pet.motionPhase, "await_geometry");
+  for (let i = 0; i < 30; i++) {
+    update(pet, [replacement], viewport);
   }
-  assert.equal(pet.motionPhase, "grounded");
-  assert.equal(pet.attachment?.kind, "ledge");
-  assert.equal(pet.attachment?.surfaceId, replacement.id);
-  assert.equal(pet.localY, 520);
+  assert.equal(pet.motionPhase, "falling");
 });
 
-test("fall recovery snaps when airborne below every ledge after timeout", () => {
+test("empty UIA still lands on the window floor", () => {
   const pet = makePet();
   const viewport = { w: 1600, h: 1100 };
-  const shelf = surface("shelf", 0, 1600, 400);
+  const shelf = surface("shelf", 0, 1600, 300);
   update(pet, [shelf], viewport);
   pet.beginFall();
-  pet.localX = 500;
-  pet.localY = 450;
-  pet.vyLocal = 80;
-  pet.fallPhase = "airborne";
-  pet.fallAirborneMs = 2799;
-  update(pet, [shelf], viewport, 1, 1, 16);
-  assert.equal(pet.localY, 400);
-  assert.equal(pet.fallPhase, "land");
-  assert.equal(pet.attachment?.surfaceId, shelf.id);
+  pet.localX = 400;
+  pet.localY = 200;
+  let floorY = null;
+  for (let i = 0; i < 400; i++) {
+    update(pet, [], viewport);
+    if (pet.fallPhase === "land") {
+      floorY = pet.localY;
+      break;
+    }
+  }
+  assert.ok(floorY != null, "expected window floor contact");
+  for (let i = 0; i < 200; i++) {
+    update(pet, [], viewport);
+    if (pet.motionPhase === "grounded") {
+      break;
+    }
+  }
+  assert.equal(pet.motionPhase, "grounded");
+  assert.equal(pet.attachment?.surfaceId, HABITAT_WINDOW_FLOOR_LEDGE_ID);
+  assert.equal(pet.localY, floorY);
+});
+
+test("IDE window switch falls to window floor without recovery timeout", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const shelf = surface("shelf", 0, 1600, 200);
+  const hwndA = 100;
+  const hwndB = 200;
+  update(pet, [shelf], viewport, 1, 1, 16, null, 1, liveMeta(hwndA, 1));
+  pet.localX = 400;
+  pet.localY = 200;
+  update(pet, [shelf], viewport, 1, 1, 16, null, 2, liveMeta(hwndB, 2));
+  assert.equal(pet.motionPhase, "falling");
+  const started = performance.now();
+  let landed = false;
+  for (let i = 0; i < 400; i++) {
+    update(pet, [], viewport, 1, 1, 16, null, 3 + i, liveMeta(hwndB, 3 + i));
+    if (pet.motionPhase === "grounded" && pet.attachment?.surfaceId === HABITAT_WINDOW_FLOOR_LEDGE_ID) {
+      landed = true;
+      break;
+    }
+  }
+  assert.ok(landed, "expected grounded on window floor");
+  assert.ok(performance.now() - started < 2000, "should not wait for timed recovery");
 });
 
 test("fall landing finishes when walkable ledges drop out during the land clip", () => {
