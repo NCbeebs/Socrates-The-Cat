@@ -100,3 +100,5 @@ Issues and PRs are welcome. Bug reports should include Windows and IDE versions,
 Source code: [MIT](LICENSE). Cat artwork and animation metadata: [artwork license](assets/pets/LICENSE.md), including attribution for public redistribution.
 
 **General Chromodynamics** — [generalchromodynamics.com](https://generalchromodynamics.com/) · [generalchromodynamics@protonmail.com](mailto:generalchromodynamics@protonmail.com)
+
+Optional support for development: [Buy Me a Coffee](https://buymeacoffee.com/generalchromodynamics). Tips are voluntary; source and artwork stay under the licenses above.
