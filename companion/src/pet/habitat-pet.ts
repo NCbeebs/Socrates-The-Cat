@@ -13,6 +13,14 @@ import type {
   SurfaceSeg,
 } from "./types";
 import { SashMatcher, type TrackedSash } from "./sash-matcher";
+import { emitPositionJumpProbe } from "./position-jump-probe";
+
+/** REMOVE BEFORE NEXT PR: inter-frame foot delta that triggers `position_jump_probe` (non-fall). */
+const POSITION_JUMP_PROBE_PX = 40;
+/** REMOVE BEFORE NEXT PR: same probe while `motionPhase === "falling"`. */
+const POSITION_JUMP_PROBE_FALLING_PX = 200;
+/** REMOVE BEFORE NEXT PR: `toDrawState` safe-box correction worth logging. */
+const POSITION_CLAMP_PROBE_PX = 2;
 
 export type PetMotionPhase =
   | "grounded"
@@ -572,6 +580,15 @@ export class HabitatPet {
   private vyLocal = 0;
   private awaitGeometryMs = 0;
   private lastSurfaceRevision = 0;
+  /** Last `GeometryMeta.targetHwnd`; HWND swaps use new window-local ledges — do not re-sync by surface id. */
+  private lastGeometryHwnd = 0;
+  // REMOVE BEFORE NEXT PR: foot sample + geometry context for `position-jump-probe.ts`.
+  private diagProbeFootPrevX = Number.NaN;
+  private diagProbeFootPrevY = Number.NaN;
+  private diagProbeRevision = 0;
+  private diagProbeHwnd = 0;
+  private diagProbeLedges = 0;
+  private diagProbeSurfaceSource = "file";
   /** IDE-local px traveled while walking; drives walk frame phase when `stridePixelsPerLoop` is set. */
   private walkOdometer = 0;
   /** Previous finalized sample for swept reach; `targetHwnd` must match for segment tests. */
@@ -711,6 +728,20 @@ export class HabitatPet {
     };
     const geometryStale = this.geometryIsStale(meta);
     const ledges = this.collectLedges(surfaces);
+    if (
+      meta.targetHwnd !== 0 &&
+      this.lastGeometryHwnd !== 0 &&
+      meta.targetHwnd !== this.lastGeometryHwnd
+    ) {
+      this.onTrackedIdeWindowChanged();
+    }
+    if (meta.targetHwnd !== 0) {
+      this.lastGeometryHwnd = meta.targetHwnd;
+    }
+    this.diagProbeRevision = surfaceRevision;
+    this.diagProbeHwnd = meta.targetHwnd;
+    this.diagProbeLedges = ledges.length;
+    this.diagProbeSurfaceSource = meta.surfaceSource ?? "file";
     const sashTracks = this.sashMatcher.ingest(
       this.collectHorizontalSashes(surfaces),
       {
@@ -1151,8 +1182,11 @@ export class HabitatPet {
     // Enforce the same boundary for falls, sash rides, portal exits, and pivot changes.
     // Move the physics anchor too so pointer reactions follow the visible cat.
     const safe = this.safeFootBounds(pivot);
+    const preClampX = this.localX;
+    const preClampY = this.localY;
     this.localX = Math.max(safe.x0, Math.min(safe.x1, this.localX));
     this.localY = Math.max(safe.y0, Math.min(safe.y1, this.localY));
+    this.probePositionAfterFootMove(preClampX, preClampY, safe, sx, sy);
     const drawX = this.localX * sx - pivot[0] * scale;
     const drawY = this.localY * sy - pivot[1] * scale;
     const { url, size } = this.resolveClip(drawKey);
@@ -1319,6 +1353,26 @@ export class HabitatPet {
       WINDOW_INSET_PX,
       Math.floor(Math.min(this.viewport.w, this.viewport.h) / 4),
     );
+  }
+
+  /**
+   * Foreground tracked IDE window changed (`lib.rs` HWND). Surface ids like `platform-statusbar-top`
+   * are stable but Y/X are window-local; `syncAttachmentFromLedgeT` must not run across HWNDs.
+   */
+  private onTrackedIdeWindowChanged(): void {
+    this.fallIgnoreLedgeId = null;
+    this.awaitGeometryMs = 0;
+    if (this.motionPhase === "cling") {
+      this.clingSubPhase = null;
+    }
+    if (this.motionPhase !== "falling") {
+      this.beginFall();
+    } else {
+      this.attachment = null;
+      this.fallPhase = "airborne";
+      this.frameIndex = this.fallAirHoldFrameIndex();
+      this.animationKey = FALL_ANIM;
+    }
   }
 
   /** Convert sprite extents from overlay pixels to the UIA geometry's local coordinates. */
@@ -2273,7 +2327,72 @@ export class HabitatPet {
     const sorted = [...ledges].sort((a, b) => this.scoreLedge(b) - this.scoreLedge(a));
     const pick = sorted[0];
     if (!pick) return;
+    const fromX = this.localX;
+    const fromY = this.localY;
     this.attachTo(pick, 0.5);
+    emitPositionJumpProbe(
+      "spawn_on_best_ledge",
+      `${this.formatPositionJumpProbeContext()} from=${fromX.toFixed(1)},${fromY.toFixed(1)} to=${this.localX.toFixed(1)},${this.localY.toFixed(1)} ledge=${pick.id}`,
+    );
+  }
+
+  /** REMOVE BEFORE NEXT PR: logs clamp + large per-frame foot deltas into runtime log via `position-jump-probe.ts`. */
+  private probePositionAfterFootMove(
+    preClampX: number,
+    preClampY: number,
+    safe: ReachBox,
+    sx: number,
+    sy: number,
+  ): void {
+    const postX = this.localX;
+    const postY = this.localY;
+    const clampDx = postX - preClampX;
+    const clampDy = postY - preClampY;
+    const clampMag = Math.hypot(clampDx, clampDy);
+    if (clampMag >= POSITION_CLAMP_PROBE_PX) {
+      emitPositionJumpProbe(
+        "safe_bounds_clamp",
+        `${this.formatPositionJumpProbeContext(sx, sy)} clampΔ=${clampDx.toFixed(1)},${clampDy.toFixed(1)} foot=${postX.toFixed(1)},${postY.toFixed(1)} safe=${safe.x0.toFixed(0)},${safe.y0.toFixed(0)}-${safe.x1.toFixed(0)},${safe.y1.toFixed(0)} viewport=${this.viewport.w}x${this.viewport.h}`,
+      );
+    }
+    const prevX = this.diagProbeFootPrevX;
+    const prevY = this.diagProbeFootPrevY;
+    if (!Number.isFinite(prevX) || !Number.isFinite(prevY)) {
+      this.diagProbeFootPrevX = postX;
+      this.diagProbeFootPrevY = postY;
+      return;
+    }
+    const frameDx = postX - prevX;
+    const frameDy = postY - prevY;
+    const frameMag = Math.hypot(frameDx, frameDy);
+    const fallThreshold =
+      this.motionPhase === "falling"
+        ? POSITION_JUMP_PROBE_FALLING_PX
+        : POSITION_JUMP_PROBE_PX;
+    if (frameMag >= fallThreshold) {
+      emitPositionJumpProbe(
+        this.motionPhase === "falling" ? "frame_delta_falling" : "frame_delta",
+        `${this.formatPositionJumpProbeContext(sx, sy)} Δ=${frameDx.toFixed(1)},${frameDy.toFixed(1)} |${frameMag.toFixed(1)}| foot=${postX.toFixed(1)},${postY.toFixed(1)} prev=${prevX.toFixed(1)},${prevY.toFixed(1)}`,
+      );
+    }
+    this.diagProbeFootPrevX = postX;
+    this.diagProbeFootPrevY = postY;
+  }
+
+  private formatPositionJumpProbeContext(sx = this.viewSx, sy = this.viewSy): string {
+    const att = this.attachment;
+    const attLabel =
+      att?.kind === "ledge"
+        ? `ledge:${att.surfaceId}`
+        : att?.kind === "sash"
+          ? `sash:${att.trackKey}`
+          : "-";
+    return (
+      `motion=${this.motionPhase} fall=${this.fallPhase ?? "null"} att=${attLabel} ` +
+      `anim=${this.animationKey} awaitMs=${this.awaitGeometryMs} rev=${this.diagProbeRevision} ` +
+      `hwnd=0x${this.diagProbeHwnd.toString(16)} ledges=${this.diagProbeLedges} src=${this.diagProbeSurfaceSource} ` +
+      `sx=${sx.toFixed(3)} sy=${sy.toFixed(3)} scale=${this.viewScale.toFixed(3)}`
+    );
   }
 
   private attachTo(ledge: Ledge, t: number) {

@@ -1,13 +1,12 @@
 //! Maps Cursor/VS Code HWND → Habitat surfaces via UI Automation.
-//! Window discovery: desktop root → `ProcessId` children, prefer native HWND (not `ElementFromHandle` alone).
+//! Window discovery: `ElementFromHandle` on the tracked HWND with exact native-handle validation;
+//! tree walk uses `FindAll(Children)` per node (raw `UITreeWalker` missed nodes).
 
 #[cfg(windows)]
 mod imp {
-    use uiautomation::types::{ControlType, Handle, TreeScope, UIProperty};
-    use uiautomation::variants::Variant;
+    use uiautomation::types::{ControlType, Handle, TreeScope};
     use uiautomation::{UIAutomation, UIElement};
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
     const MAX_DEPTH: u32 = 16;
     const MAX_NODES: usize = 4000;
@@ -114,39 +113,23 @@ mod imp {
         ah == hwnd.0 as isize
     }
 
-    /// Root → child with matching `ProcessId`; requires exact native HWND match.
+    /// Resolves the UIA root for the tracked IDE HWND (`LiveUiaSession::connect` / `rediscover_window`,
+    /// driven by the live thread in `lib.rs` on every IDE window swap). Direct `ElementFromHandle`
+    /// yields the same element and subtree as a desktop → `ProcessId` search, but a desktop search
+    /// queries every top-level window and one unresponsive app stalls it for tens of seconds —
+    /// leaving the overlay on the old window's ledges and `habitat-pet.ts` rejecting pointer
+    /// samples as `hwnd_mismatch` until geometry for the new HWND arrives.
     fn resolve_uia_window(automation: &UIAutomation, hwnd: HWND) -> Result<UIElement, String> {
-        let mut pid = 0u32;
-        unsafe {
-            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let window = automation
+            .element_from_handle(Handle::from(hwnd.0 as isize))
+            .map_err(|e| format!("element_from_handle: {}", e))?;
+        if !window_element_valid(&window, hwnd) {
+            return Err(format!(
+                "UIA element for hwnd {} has no matching native handle",
+                hwnd.0 as isize
+            ));
         }
-        if pid == 0 {
-            return Err("GetWindowThreadProcessId returned 0".into());
-        }
-
-        let desktop = automation
-            .get_root_element()
-            .map_err(|e| format!("get_root_element: {}", e))?;
-        let cond = automation
-            .create_property_condition(UIProperty::ProcessId, Variant::from(pid as i32), None)
-            .map_err(|e| format!("ProcessId condition: {}", e))?;
-
-        let candidates = desktop
-            .find_all(TreeScope::Children, &cond)
-            .map_err(|e| format!("find_all ProcessId children: {}", e))?;
-
-        for el in candidates {
-            if let Ok(native) = el.get_native_window_handle() {
-                if handles_match(native, hwnd) {
-                    return Ok(el);
-                }
-            }
-        }
-
-        Err(format!(
-            "no exact UIA Window match for pid {} (hwnd {})",
-            pid, hwnd.0 as isize
-        ))
+        Ok(window)
     }
 
     /// Depth-first walk (`FindAll(Children)` per node).
@@ -172,6 +155,17 @@ mod imp {
             return -1.0;
         }
         w / h
+    }
+
+    /// Cursor/VS Code expose more than one `ControlType::StatusBar`; the window status bar is the
+    /// wide one flush with the client bottom. Full and cached scans must agree on this element or
+    /// `platform-statusbar-top` flips Y every full scan and the pet (`habitat-pet.ts`) follows it.
+    fn score_window_status_bar(n: &UiaNode, client_w: f64, client_h: f64) -> Option<f64> {
+        if n.control_type != ControlType::StatusBar || n.w <= 0.0 || n.h <= 0.0 {
+            return None;
+        }
+        let bottom_gap = (client_h - (n.y + n.h)).abs();
+        Some(n.w.min(client_w) - 4.0 * bottom_gap)
     }
 
     fn is_horizontal_panel_sash(n: &UiaNode, client_w: f64, monaco_horizontal: bool) -> bool {
@@ -335,6 +329,7 @@ mod imp {
         horizontal_sashes: &mut Vec<UIElement>,
         vertical_walls: &mut Vec<UIElement>,
         status_bar: &mut Option<UIElement>,
+        status_bar_best_score: &mut f64,
         tab: &mut Option<UIElement>,
         tab_best_score: &mut f64,
         tree: &mut Option<UIElement>,
@@ -363,8 +358,11 @@ mod imp {
                 if cache_v {
                     vertical_walls.push(element.clone());
                 }
-                if node.control_type == ControlType::StatusBar {
-                    *status_bar = Some(element.clone());
+                if let Some(score) = score_window_status_bar(&node, client_w, client_h) {
+                    if score > *status_bar_best_score {
+                        *status_bar_best_score = score;
+                        *status_bar = Some(element.clone());
+                    }
                 }
                 let tab_score = score_editor_tab_strip(&node, element_class.as_deref());
                 if tab_score > *tab_best_score {
@@ -400,6 +398,7 @@ mod imp {
                 horizontal_sashes,
                 vertical_walls,
                 status_bar,
+                status_bar_best_score,
                 tab,
                 tab_best_score,
                 tree,
@@ -450,6 +449,7 @@ mod imp {
         let mut nodes = Vec::new();
         let mut budget = MAX_NODES;
         let mut tab_best_score = -1.0_f64;
+        let mut status_bar_best_score = f64::NEG_INFINITY;
         horizontal_sashes.clear();
         vertical_walls.clear();
         *status_bar = None;
@@ -467,6 +467,7 @@ mod imp {
             horizontal_sashes,
             vertical_walls,
             status_bar,
+            &mut status_bar_best_score,
             tab,
             &mut tab_best_score,
             tree,
@@ -505,10 +506,12 @@ mod imp {
             })
             .collect();
 
-        let statusbar = nodes
-            .iter()
-            .find(|n| n.control_type == ControlType::StatusBar)
-            .map(status_bar_surface);
+        let statusbar = status_bar.as_ref().and_then(|el| {
+            element_to_local_node(el, uia_origin_x, uia_origin_y)
+                .ok()
+                .filter(|n| n.control_type == ControlType::StatusBar)
+                .map(|n| status_bar_surface(&n))
+        });
         let tab = tab.as_ref().and_then(|el| {
             let class = el.get_classname().ok();
             element_to_local_node(el, uia_origin_x, uia_origin_y)
@@ -534,7 +537,7 @@ mod imp {
         })
     }
 
-    /// Reused by the live UIA worker: one desktop discovery per HWND, then cheap tree walks.
+    /// Reused by the live UIA worker: one window lookup per HWND, then cheap tree walks.
     pub struct LiveUiaSession {
         hwnd: isize,
         automation: UIAutomation,
@@ -687,7 +690,8 @@ mod imp {
     mod heuristic_tests {
         use super::{
             is_horizontal_panel_sash, is_vertical_wall_node, monaco_sash_kind, sash_cache_flags,
-            sash_h, sash_w, score_editor_tab_strip, MonacoSashKind, UiaNode,
+            sash_h, sash_w, score_editor_tab_strip, score_window_status_bar, MonacoSashKind,
+            UiaNode,
         };
         use uiautomation::types::ControlType;
 
@@ -750,6 +754,22 @@ mod imp {
             assert!(is_vertical_wall_node(&tall, 900.0, true));
             let wide = sash_node(1200.0, 4.0);
             assert!(is_horizontal_panel_sash(&wide, 1200.0, true));
+        }
+
+        #[test]
+        fn window_status_bar_beats_mid_window_status_bar() {
+            let status = |x: f64, y: f64, w: f64, h: f64| UiaNode {
+                control_type: ControlType::StatusBar,
+                x,
+                y,
+                w,
+                h,
+            };
+            let (client_w, client_h) = (2576.0, 1408.0);
+            let window = score_window_status_bar(&status(0.0, 1371.0, 2576.0, 37.0), client_w, client_h);
+            let panel = score_window_status_bar(&status(400.0, 1120.0, 2000.0, 30.0), client_w, client_h);
+            assert!(window.unwrap() > panel.unwrap());
+            assert!(score_window_status_bar(&tab_node(2576.0, 37.0), client_w, client_h).is_none());
         }
 
         #[test]
