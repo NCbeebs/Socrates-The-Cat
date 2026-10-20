@@ -4,7 +4,7 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ## Unreleased
 
-- Fix fall landing freeze: crossing-based landing with `establishFallLanding()` (snap foot to ledge Y instead of rejecting overshoot), continue the land clip when `collectLedges` omits the contact ledge, and treat the IDE window bottom (`habitat:window-floor`) as a real walkable surface (HWND swaps fall to floor; ordinary falls use UIA ledges then floor; no timed recovery teleport or missing-ledge re-home).
+- Fix fall freeze: any ledge crossed during a fall now lands the cat (fast falls were rejected for overshooting by >8 px, passed through every ledge, and stuck at the window bottom). Empty UIA snapshots no longer interrupt the land clip or teleport a falling cat to the center ledge, and a fall that starts below every ledge (e.g. switching to a shorter IDE window) lands on the status bar.
 - README and `.github/FUNDING.yml` link optional [Buy Me a Coffee](https://buymeacoffee.com/generalchromodynamics) support for General Chromodynamics.
 - Restore documented install flow: `npm ci`, `npm link`, then `socrates` as the primary path (`npm start` remains the no-link alternative).
 - Windows companion for VS Code and Cursor, using live UI Automation geometry and a click-through Tauri overlay. Follows foreground windows of the IDE selected at launch.
@@ -17,6 +17,5 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ### Known limitations
 
-- HWND swaps intentionally drop UIA support and fall to the window floor; horizontal position is preserved within the new window bounds.
 - Windows only; installation requires a source checkout and the Node/Rust build toolchains. No published installer or IDE extension.
 - Broader VS Code layout testing is still needed. A previously reported startup animation pause has a fallback in place, but its effectiveness across cold starts remains unconfirmed.

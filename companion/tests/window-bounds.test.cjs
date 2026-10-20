@@ -18,7 +18,6 @@ function loadTypeScript(filename) {
 const habitatPetModule = loadTypeScript(path.resolve(__dirname, "../src/pet/habitat-pet.ts"));
 const {
   HabitatPet,
-  HABITAT_WINDOW_FLOOR_LEDGE_ID,
   buildSitLookAngleKeyframes,
   stepSitLookGazeCell,
   nearestSitLookGazeCell,
@@ -51,42 +50,20 @@ function makePet() {
   return pet;
 }
 
-function liveMeta(targetHwnd, scanSequence = 1) {
-  return {
-    observedAtMs: Date.now(),
-    targetHwnd,
-    scanSequence,
-    surfaceSource: "live",
-  };
-}
-
-function update(
-  pet,
-  surfaces,
-  viewport,
-  sx = 1,
-  sy = sx,
-  dt = 16,
-  pointer = null,
-  revision = 1,
-  geometryMeta = meta,
-) {
+function update(pet, surfaces, viewport, sx = 1, sy = sx, dt = 16, pointer = null, revision = 1, geometryMeta = meta) {
   return pet.update(dt, surfaces, sx, sy, viewport, pointer, revision, geometryMeta);
 }
 
-const GRAVITY_LOCAL = 1400;
-const LEGACY_FALL_FOOT_TOLERANCE_PX = 8;
+const liveMeta = (targetHwnd, scanSequence) => ({ observedAtMs: Date.now(), targetHwnd, scanSequence, surfaceSource: "live" });
+const statusBar = (x1, y) => ({ ...surface("platform-statusbar-top", 0, x1, y), role: "platform" });
 
-/** Foot Y after one `stepFall` integration step (matches `habitat-pet.ts`). */
-function fallStepEndY(y0, vy0, dtMs) {
-  const dt = dtMs / 1000;
-  const vy = vy0 + GRAVITY_LOCAL * dt;
-  return y0 + vy * dt;
-}
-
-/** Old contact handler rejected landings when the foot overshot the ledge Y in one step. */
-function legacyFallFootContactRejected(y1, ledgeY, tolerance = LEGACY_FALL_FOOT_TOLERANCE_PX) {
-  return Math.abs(y1 - ledgeY) > tolerance;
+/** Run fall frames until the land clip starts; returns the contact ledge id or null. */
+function fallUntilLand(pet, surfaces, viewport, dt, maxMs = 4000) {
+  for (let t = 0; t < maxMs; t += dt) {
+    update(pet, surfaces, viewport, 1, 1, dt);
+    if (pet.fallPhase === "land") return pet.attachment?.surfaceId ?? null;
+  }
+  return null;
 }
 
 function assertInside(state, viewport) {
@@ -297,180 +274,82 @@ test("all animation pivots and pounce contacts fit at every corner in both direc
   }
 });
 
-test("fall land clip completes when contact ledge is omitted but other walkable ledges remain", () => {
-  const pet = makePet();
-  const viewport = { w: 1600, h: 1100 };
-  const floor = surface("floor", 0, 1600, 500);
-  const decoy = surface("decoy", 0, 1600, 700);
-  update(pet, [floor, decoy], viewport);
-  pet.motionPhase = "falling";
-  pet.fallPhase = "land";
-  pet.activityId = "idle";
-  pet.animationKey = "fall";
-  pet.localX = 400;
-  pet.localY = 500;
-  pet.frameIndex = pet.fallLandStartFrameIndex();
-  pet.frameAccumulator = 0;
-  pet.attachment = { kind: "ledge", surfaceId: floor.id, t: 0.25 };
-  for (let i = 0; i < 200; i++) {
-    update(pet, [decoy], viewport);
-    if (pet.motionPhase === "grounded" && pet.fallPhase === null) {
-      break;
-    }
-  }
-  assert.equal(pet.motionPhase, "grounded");
-  assert.equal(pet.fallPhase, null);
-  assert.equal(pet.animationKey, "idle");
-  assert.equal(pet.attachment?.kind, "ledge");
-  assert.equal(pet.attachment?.surfaceId, floor.id);
-  assert.equal(pet.localY, 500);
-});
-
-test("brief missing grounded ledge restores original attachment without re-homing", () => {
-  const pet = makePet();
-  const viewport = { w: 1600, h: 1100 };
-  const floor = surface("floor", 0, 1600, 500);
-  const other = surface("other", 0, 1600, 520);
-  update(pet, [floor, other], viewport);
-  pet.motionPhase = "grounded";
-  pet.localX = 400;
-  pet.localY = 500;
-  pet.attachment = { kind: "ledge", surfaceId: floor.id, t: 0.25 };
-  update(pet, [other], viewport, 1, 1, 16, null, 2);
-  assert.equal(pet.motionPhase, "await_geometry");
-  assert.equal(pet.attachment?.surfaceId, floor.id);
-  assert.equal(pet.localY, 500);
-  update(pet, [floor, other], viewport, 1, 1, 16, null, 3);
-  assert.equal(pet.attachment?.surfaceId, floor.id);
-  assert.equal(pet.localY, 500);
-});
-
+// Regression: the land check rejected crossings whose post-step foot overshot the ledge by >8 px,
+// so fast falls passed through and froze at the window-bottom clamp.
 for (const dtMs of [16, 16.67, 33, 48]) {
-  test(`fall lands on crossing when one step overshoots ledge Y by >${LEGACY_FALL_FOOT_TOLERANCE_PX}px (dt=${dtMs}ms)`, () => {
-    const ledgeY = 400;
-    const y0 = 390;
-    const vy0 = 1200;
-    const y1 = fallStepEndY(y0, vy0, dtMs);
-    assert.ok(
-      legacyFallFootContactRejected(y1, ledgeY),
-      `expected legacy contact rejection at y1=${y1.toFixed(2)} ledgeY=${ledgeY}`,
-    );
-
-    const pet = makePet();
+  test(`falls land on every crossed ledge regardless of per-step overshoot (dt=${dtMs}ms)`, () => {
     const viewport = { w: 1600, h: 1100 };
-    const shelf = surface("shelf", 100, 900, ledgeY);
-    update(pet, [shelf], viewport);
-    pet.beginFall();
-    pet.localX = 500;
-    pet.localY = y0;
-    pet.vyLocal = vy0;
-    pet.fallPhase = "airborne";
-    update(pet, [shelf], viewport, 1, 1, dtMs);
-
-    assert.equal(
-      pet.localY,
-      ledgeY,
-      "foot should snap to ledge Y despite overshoot",
-    );
-    assert.equal(pet.fallPhase, "land");
-    assert.equal(pet.attachment?.kind, "ledge");
-    assert.equal(pet.attachment?.surfaceId, shelf.id);
+    const surfaces = [surface("tab", 0, 1600, 40), surface("shelf", 0, 1600, 500), statusBar(1600, 1056)];
+    for (let y = 60; y < 480; y += 7) {
+      const pet = makePet();
+      update(pet, surfaces, viewport);
+      pet.localX = 400;
+      pet.localY = y;
+      pet.beginFall();
+      assert.equal(fallUntilLand(pet, surfaces, viewport, dtMs), "shelf", `start y=${y}`);
+      assert.equal(pet.localY, 500);
+    }
   });
 }
 
-test("missing grounded ledge begins fall instead of re-homing to another ledge", () => {
+test("empty snapshot during the land clip still finishes landing", () => {
   const pet = makePet();
   const viewport = { w: 1600, h: 1100 };
-  const gone = surface("gone", 0, 1600, 500);
-  update(pet, [gone], viewport);
-  pet.motionPhase = "grounded";
+  const surfaces = [surface("shelf", 0, 1600, 500), statusBar(1600, 1056)];
+  update(pet, surfaces, viewport);
   pet.localX = 400;
-  pet.localY = 500;
-  pet.attachment = { kind: "ledge", surfaceId: gone.id, t: 0.25 };
-  const replacement = surface("replacement", 0, 1600, 520);
-  update(pet, [replacement], viewport, 1, 1, 16, null, 2);
-  assert.equal(pet.motionPhase, "await_geometry");
-  for (let i = 0; i < 30; i++) {
-    update(pet, [replacement], viewport);
-  }
-  assert.equal(pet.motionPhase, "falling");
-});
-
-test("empty UIA still lands on the window floor", () => {
-  const pet = makePet();
-  const viewport = { w: 1600, h: 1100 };
-  const shelf = surface("shelf", 0, 1600, 300);
-  update(pet, [shelf], viewport);
+  pet.localY = 480;
   pet.beginFall();
-  pet.localX = 400;
-  pet.localY = 200;
-  let floorY = null;
-  for (let i = 0; i < 400; i++) {
-    update(pet, [], viewport);
-    if (pet.fallPhase === "land") {
-      floorY = pet.localY;
-      break;
-    }
-  }
-  assert.ok(floorY != null, "expected window floor contact");
-  for (let i = 0; i < 200; i++) {
-    update(pet, [], viewport);
-    if (pet.motionPhase === "grounded") {
-      break;
-    }
-  }
-  assert.equal(pet.motionPhase, "grounded");
-  assert.equal(pet.attachment?.surfaceId, HABITAT_WINDOW_FLOOR_LEDGE_ID);
-  assert.equal(pet.localY, floorY);
-});
-
-test("IDE window switch falls to window floor without recovery timeout", () => {
-  const pet = makePet();
-  const viewport = { w: 1600, h: 1100 };
-  const shelf = surface("shelf", 0, 1600, 200);
-  const hwndA = 100;
-  const hwndB = 200;
-  update(pet, [shelf], viewport, 1, 1, 16, null, 1, liveMeta(hwndA, 1));
-  pet.localX = 400;
-  pet.localY = 200;
-  update(pet, [shelf], viewport, 1, 1, 16, null, 2, liveMeta(hwndB, 2));
-  assert.equal(pet.motionPhase, "falling");
-  const started = performance.now();
-  let landed = false;
-  for (let i = 0; i < 400; i++) {
-    update(pet, [], viewport, 1, 1, 16, null, 3 + i, liveMeta(hwndB, 3 + i));
-    if (pet.motionPhase === "grounded" && pet.attachment?.surfaceId === HABITAT_WINDOW_FLOOR_LEDGE_ID) {
-      landed = true;
-      break;
-    }
-  }
-  assert.ok(landed, "expected grounded on window floor");
-  assert.ok(performance.now() - started < 2000, "should not wait for timed recovery");
-});
-
-test("fall landing finishes when walkable ledges drop out during the land clip", () => {
-  const pet = makePet();
-  const viewport = { w: 1600, h: 1100 };
-  const floor = surface("floor", 0, 1600, 500);
-  update(pet, [floor], viewport);
-  pet.localX = 400;
-  pet.localY = 100;
-  pet.beginFall();
-  let landed = false;
-  for (let i = 0; i < 400; i++) {
-    update(pet, [floor], viewport);
-    if (pet.fallPhase === "land") {
-      landed = true;
-      break;
-    }
-  }
-  assert.ok(landed, "fall should reach ledge contact and enter land phase");
-  for (let i = 0; i < 200; i++) {
-    update(pet, [], viewport);
-  }
+  assert.equal(fallUntilLand(pet, surfaces, viewport, 16), "shelf");
+  update(pet, [], viewport);
+  for (let i = 0; i < 200; i++) update(pet, surfaces, viewport);
   assert.equal(pet.motionPhase, "grounded");
   assert.equal(pet.fallPhase, null);
   assert.equal(pet.animationKey, "idle");
+});
+
+test("empty snapshot mid-fall does not respawn the cat on the best ledge", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const surfaces = [surface("tab", 0, 1600, 40), surface("shelf", 0, 1600, 500), statusBar(1600, 1056)];
+  update(pet, surfaces, viewport);
+  pet.localX = 300;
+  pet.localY = 200;
+  pet.beginFall();
+  update(pet, [], viewport);
+  update(pet, surfaces, viewport);
+  assert.equal(pet.motionPhase, "falling");
+  assert.equal(pet.localX, 300);
+  assert.equal(fallUntilLand(pet, surfaces, viewport, 16), "shelf");
+});
+
+test("fall starting below every ledge lands on the status bar", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const surfaces = [surface("tab", 0, 1600, 40), statusBar(1600, 1056)];
+  update(pet, surfaces, viewport);
+  pet.localX = 400;
+  pet.localY = 1090;
+  pet.beginFall();
+  assert.equal(fallUntilLand(pet, surfaces, viewport, 16), "platform-statusbar-top");
+  assert.equal(pet.localY, 1056);
+});
+
+test("IDE window switch to a shorter window lands on its status bar", () => {
+  const pet = makePet();
+  const surfacesA = [surface("tab", 0, 1600, 40), surface("explorer", 0, 1600, 900), statusBar(1600, 1056)];
+  update(pet, surfacesA, { w: 1600, h: 1100 }, 1, 1, 16, null, 1, liveMeta(1, 1));
+  pet.attachment = { kind: "ledge", surfaceId: "explorer", t: 0.25 };
+  pet.localY = 900;
+  update(pet, surfacesA, { w: 1600, h: 1100 }, 1, 1, 16, null, 1, liveMeta(1, 2));
+  const viewportB = { w: 1600, h: 700 };
+  const surfacesB = [surface("tab", 0, 1600, 40), statusBar(1600, 656)];
+  for (let i = 0; i < 20; i++) update(pet, [], viewportB, 1, 1, 16, null, 2, liveMeta(2, 3 + i));
+  for (let i = 0; i < 300; i++) update(pet, surfacesB, viewportB, 1, 1, 16, null, 3, liveMeta(2, 30 + i));
+  assert.equal(pet.motionPhase, "grounded");
+  assert.equal(pet.fallPhase, null);
+  assert.equal(pet.attachment?.surfaceId, "platform-statusbar-top");
+  assert.equal(pet.localY, 656);
 });
 
 test("resizing and nonuniform DPI mapping constrain active falls, even without geometry", () => {
