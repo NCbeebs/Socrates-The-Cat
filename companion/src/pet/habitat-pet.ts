@@ -112,8 +112,6 @@ type SupportAttachment =
     };
 
 const GRAVITY_LOCAL = 1400;
-/** Synthetic walkable at `safeFootBounds().y1`; not from UIA. */
-export const HABITAT_WINDOW_FLOOR_LEDGE_ID = "habitat:window-floor";
 const FALL_ANIM = "fall";
 const FALL_AIR_LAST_CELL = 5;
 const FALL_LAND_FIRST_CELL = 6;
@@ -563,6 +561,7 @@ export class HabitatPet {
   /** Departing ledge to skip for immediate re-landing after a support-drop fall. */
   private fallIgnoreLedgeId: string | null = null;
   private rideCooldownMs = 0;
+  private fallPrevY = 0;
   private viewSx = 1;
   private viewSy = 1;
   private viewScale = 1;
@@ -573,11 +572,6 @@ export class HabitatPet {
   private vyLocal = 0;
   private awaitGeometryMs = 0;
   private lastSurfaceRevision = 0;
-  private lastGeometryHwnd = 0;
-  /** After HWND swap: ignore UIA ledges until the window floor landing completes. */
-  private fallWindowFloorOnly = false;
-  /** `spawnOnBestLedge` is for first placement only, not mid-session recovery. */
-  private hasInitialSpawn = false;
   /** IDE-local px traveled while walking; drives walk frame phase when `stridePixelsPerLoop` is set. */
   private walkOdometer = 0;
   /** Previous finalized sample for swept reach; `targetHwnd` must match for segment tests. */
@@ -716,16 +710,6 @@ export class HabitatPet {
       surfaceSource: "file",
     };
     const geometryStale = this.geometryIsStale(meta);
-    if (
-      meta.targetHwnd !== 0 &&
-      this.lastGeometryHwnd !== 0 &&
-      meta.targetHwnd !== this.lastGeometryHwnd
-    ) {
-      this.onIdeWindowChanged();
-    }
-    if (meta.targetHwnd !== 0) {
-      this.lastGeometryHwnd = meta.targetHwnd;
-    }
     const ledges = this.collectLedges(surfaces);
     const sashTracks = this.sashMatcher.ingest(
       this.collectHorizontalSashes(surfaces),
@@ -784,25 +768,16 @@ export class HabitatPet {
     }
 
     if (!ledges.length && !inCling && this.motionPhase !== "slide") {
-      // UIA can briefly yield zero walkable ledges after HWND/size churn. Do not
-      // demote `falling` → `await_geometry` here: that skips `tickFallAnimation`,
-      // and the next frame can promote to `grounded` on attachment while `fallPhase`
-      // is still `land` — frozen on the fall sheet (`main.ts` journal stuck on falling).
+      this.finishPortal();
+      this.cancelPointerReactionPlayback();
+      // Stay `falling` so the land clip can finish and `spawnOnBestLedge` cannot run mid-fall.
       if (this.motionPhase === "falling") {
-        if (this.fallPhase !== "land") {
-          this.stepFall(ledges, dt);
-        }
         this.tickFallAnimation(dtMs);
-        this.tickPointerReachBookkeeping(this.frameValidatedPointer);
-        return this.toDrawState(scale, sx, sy);
-      }
-      if (!this.attachment) {
-        this.finishPortal();
-        this.cancelPointerReactionPlayback();
+      } else {
         this.motionPhase = "await_geometry";
-        this.tickPointerReachBookkeeping(this.frameValidatedPointer);
-        return this.toDrawState(scale, sx, sy);
       }
+      this.tickPointerReachBookkeeping(this.frameValidatedPointer);
+      return this.toDrawState(scale, sx, sy);
     }
 
     if (this.portalPhase !== "awake") {
@@ -817,32 +792,18 @@ export class HabitatPet {
     }
 
     if (
-      !this.hasInitialSpawn &&
       !this.attachment &&
       this.awaitGeometryMs <= 0 &&
       this.motionPhase !== "falling"
     ) {
       this.spawnOnBestLedge(ledges);
       if (this.attachment) {
-        this.hasInitialSpawn = true;
         this.motionPhase = "grounded";
       }
     }
 
     if (this.motionPhase === "await_geometry" && this.awaitGeometryMs <= 0) {
-      if (this.attachment) {
-        if (this.fallPhase !== null) {
-          this.completeFallLanding();
-        } else {
-          this.motionPhase = "grounded";
-        }
-      } else {
-        this.motionPhase = "falling";
-      }
-    }
-
-    if (this.motionPhase === "grounded" && this.fallPhase !== null) {
-      this.completeFallLanding();
+      this.motionPhase = this.attachment ? "grounded" : "falling";
     }
 
     if (
@@ -1361,40 +1322,6 @@ export class HabitatPet {
   }
 
   /** Convert sprite extents from overlay pixels to the UIA geometry's local coordinates. */
-  private windowFloorLedge(): Ledge {
-    const [px, py] = this.habitat.pivot;
-    const safe = this.safeFootBounds([px, py]);
-    const margin = this.footMarginLocal();
-    const x0 = safe.x0 + margin;
-    const x1 = safe.x1 - margin;
-    return {
-      id: HABITAT_WINDOW_FLOOR_LEDGE_ID,
-      role: "ledge",
-      x0,
-      x1,
-      y: safe.y1,
-      length: Math.max(0, x1 - x0),
-      confidence: 1,
-    };
-  }
-
-  private onIdeWindowChanged(): void {
-    this.fallIgnoreLedgeId = null;
-    this.awaitGeometryMs = 0;
-    if (this.motionPhase === "cling") {
-      this.clingSubPhase = null;
-    }
-    if (this.motionPhase !== "falling") {
-      this.beginFall(true);
-    } else {
-      this.attachment = null;
-      this.fallPhase = "airborne";
-      this.frameIndex = this.fallAirHoldFrameIndex();
-      this.animationKey = FALL_ANIM;
-    }
-    this.fallWindowFloorOnly = true;
-  }
-
   private safeFootBounds([px, py]: [number, number]): ReachBox {
     const [fw, fh] = this.habitat.grid.frameSize;
     const inset = this.windowInset();
@@ -1446,15 +1373,6 @@ export class HabitatPet {
     const att = this.attachment;
     if (!att || att.kind !== "ledge") {
       return false;
-    }
-    if (att.surfaceId === HABITAT_WINDOW_FLOOR_LEDGE_ID) {
-      const floor = this.windowFloorLedge();
-      const margin = this.footMarginLocal();
-      return (
-        this.localX >= floor.x0 - margin &&
-        this.localX <= floor.x1 + margin &&
-        Math.abs(this.localY - floor.y) <= 6
-      );
     }
     const ledge = ledges.find((l) => l.id === att.surfaceId);
     if (!ledge) {
@@ -1757,6 +1675,7 @@ export class HabitatPet {
     this.clingSubPhase = null;
     this.attachment = null;
     this.beginFall();
+    this.fallPrevY = this.localY;
     if (!aborted) {
       this.rideCooldownMs = RIDE_COOLDOWN_MS;
     }
@@ -2521,9 +2440,6 @@ export class HabitatPet {
       return null;
     }
     const id = this.attachment.surfaceId;
-    if (id === HABITAT_WINDOW_FLOOR_LEDGE_ID) {
-      return this.windowFloorLedge();
-    }
     return ledges.find((l) => l.id === id) ?? null;
   }
 
@@ -2536,14 +2452,10 @@ export class HabitatPet {
     const ledge = this.ledgeFromAttachment(ledges);
     if (!ledge) {
       this.finishPortal();
-      const att = this.attachment;
-      if (
-        att?.kind === "ledge" &&
-        att.surfaceId !== HABITAT_WINDOW_FLOOR_LEDGE_ID &&
-        this.awaitGeometryMs <= 0 &&
-        this.motionPhase !== "falling"
-      ) {
-        this.beginFallFromSupportDrop(att.surfaceId);
+      if (this.attachment && this.motionPhase !== "await_geometry") {
+        this.beginFall();
+      } else if (!this.attachment && this.awaitGeometryMs <= 0) {
+        this.spawnOnBestLedge(ledges);
       }
       return;
     }
@@ -2575,6 +2487,7 @@ export class HabitatPet {
     this.syncedSupportLedgeY = null;
     this.awaitGeometryMs = 0;
     this.beginFall(false);
+    this.fallPrevY = this.localY;
   }
 
   private beginFall(clearDepartingLedgeIgnore = true, skipDividerSlideClear = false) {
@@ -2661,13 +2574,11 @@ export class HabitatPet {
   private completeFallLanding() {
     this.fallPhase = null;
     this.fallIgnoreLedgeId = null;
-    this.fallWindowFloorOnly = false;
     this.motionPhase = "grounded";
     this.startIdle();
   }
 
-  /** Snap foot to ledge Y and start the land clip (post-step overshoot is expected). */
-  private establishFallLanding(ledge: Ledge): void {
+  private onFallLedgeContact(ledge: Ledge) {
     this.localY = ledge.y;
     this.attachToLedgePreserveFoot(ledge);
     this.syncedSupportLedgeY = ledge.y;
@@ -2675,34 +2586,11 @@ export class HabitatPet {
     this.frameIndex = this.fallLandStartFrameIndex();
     this.frameAccumulator = 0;
     this.vyLocal = 0;
-    this.fallWindowFloorOnly = false;
-  }
-
-  private findWindowFloorCrossing(
-    x: number,
-    y0: number,
-    y1: number,
-  ): Ledge | null {
-    if (y1 <= y0 + 0.01) {
-      return null;
-    }
-    const floor = this.windowFloorLedge();
-    const margin = this.footMarginLocal();
-    if (x < floor.x0 - margin || x > floor.x1 + margin) {
-      return null;
-    }
-    if (floor.y > y0 - 2 && floor.y <= y1 + 4) {
-      return floor;
-    }
-    return null;
   }
 
   private stepFall(ledges: Ledge[], dt: number) {
     if (this.fallPhase === "land") {
-      // Landing contact already established. `collectLedges` can temporarily omit that
-      // id (safe bounds, foot margin, UIA churn) while the land clip plays — do not
-      // detach or the cat loops on land frame 0 with `@-` support.
-      if (this.attachment?.kind === "ledge") {
+      if (this.ledgeFromAttachment(ledges)) {
         return;
       }
       this.attachment = null;
@@ -2710,26 +2598,30 @@ export class HabitatPet {
       this.frameIndex = this.fallAirHoldFrameIndex();
     }
 
-    const y0 = this.localY;
+    this.fallPrevY = this.localY;
     this.vyLocal += GRAVITY_LOCAL * dt;
     this.localY += this.vyLocal * dt;
 
-    const crossLedges = this.fallWindowFloorOnly ? [] : ledges;
-    const land = this.findLandingLedgeCrossing(
-      crossLedges,
-      this.localX,
-      y0,
-      this.localY,
-    );
+    const land =
+      this.findLandingLedgeCrossing(ledges, this.localX, this.fallPrevY, this.localY) ??
+      this.lowestLedgeAtWindowBottom(ledges);
     if (land) {
-      this.establishFallLanding(land);
-      return;
+      this.onFallLedgeContact(land);
     }
+  }
 
-    const floor = this.findWindowFloorCrossing(this.localX, y0, this.localY);
-    if (floor) {
-      this.establishFallLanding(floor);
+  /**
+   * A fall that started below every ledge (e.g. HWND swap to a shorter window) is pinned at the
+   * `toDrawState` bottom clamp and can never cross one; land on the lowest UIA ledge under the
+   * foot instead (normally `platform-statusbar-top` from `surface_mapper.rs`).
+   */
+  private lowestLedgeAtWindowBottom(ledges: Ledge[]): Ledge | null {
+    if (this.localY < this.safeFootBounds(this.pivotForDraw(FALL_ANIM)).y1) {
+      return null;
     }
+    const margin = this.footMarginLocal();
+    const under = ledges.filter((l) => this.localX >= l.x0 - margin && this.localX <= l.x1 + margin);
+    return under.sort((a, b) => b.y - a.y)[0] ?? null;
   }
 
   private findLandingLedgeCrossing(
@@ -2738,17 +2630,16 @@ export class HabitatPet {
     y0: number,
     y1: number,
   ): Ledge | null {
-    if (y1 <= y0 + 0.01) {
-      return null;
-    }
     const margin = this.footMarginLocal();
+    const top = Math.min(y0, y1);
+    const bottom = Math.max(y0, y1);
     const candidates = ledges
       .filter(
         (l) =>
           x >= l.x0 - margin &&
           x <= l.x1 + margin &&
-          l.y > y0 - 2 &&
-          l.y <= y1 + 4 &&
+          l.y > top - 2 &&
+          l.y <= bottom + 4 &&
           !(
             this.fallIgnoreLedgeId &&
             l.id === this.fallIgnoreLedgeId &&
