@@ -335,6 +335,23 @@ test("fall starting below every ledge lands on the status bar", () => {
   assert.equal(pet.localY, 1056);
 });
 
+test("tracked IDE HWND change falls instead of re-syncing the same ledge id", () => {
+  const pet = makePet();
+  const viewport = { w: 1600, h: 1100 };
+  const statusA = statusBar(1600, 1056);
+  update(pet, [statusA], viewport, 1, 1, 16, null, 10, liveMeta(0x10856, 10));
+  pet.localX = 1182;
+  pet.localY = 1056;
+  pet.attachment = { kind: "ledge", surfaceId: "platform-statusbar-top", t: 0.75 };
+  pet.motionPhase = "grounded";
+  pet.animationKey = "dream_comfy";
+  const statusB = statusBar(1600, 942);
+  update(pet, [statusB], viewport, 1, 1, 16, null, 12, liveMeta(0x200fa0, 12));
+  assert.equal(pet.motionPhase, "falling");
+  assert.equal(pet.attachment, null);
+  assert.ok(Math.abs(pet.localX - 1182) < 50, `unexpected foot X snap via ledge re-sync: ${pet.localX}`);
+});
+
 test("IDE window switch to a shorter window lands on its status bar", () => {
   const pet = makePet();
   const surfacesA = [surface("tab", 0, 1600, 40), surface("explorer", 0, 1600, 900), statusBar(1600, 1056)];

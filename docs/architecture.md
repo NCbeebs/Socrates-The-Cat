@@ -19,7 +19,7 @@ Pet art and behavior live in [`assets/pets/default-cat/pet.json`](../assets/pets
 Rust [`surface_mapper.rs`](../companion/src-tauri/src/surface_mapper.rs) polls UI Automation on the foreground window of the **session IDE host** ([`ide_host.rs`](../companion/src-tauri/src/ide_host.rs)—`Code.exe` or `Cursor.exe`, chosen at launch):
 
 
-- Discover the UIA root via desktop → `ProcessId` children (exact native HWND match only). Sash detection accepts 4–9px (VS Code default), `monaco-sash` orientation classes, depth 16, and scores wide horizontal `Tab` strips over the activity bar.
+- Discover the UIA root via `ElementFromHandle` on the tracked HWND (exact native HWND match only; a desktop → `ProcessId` search returns the same subtree but can stall for tens of seconds behind an unresponsive top-level window). Sash detection accepts 4–9px (VS Code default), `monaco-sash` orientation classes, depth 16, and scores wide horizontal `Tab` strips over the activity bar.
 - Recurse children (depth-capped) and emit horizontal **ledge** segments in **window-local pixels**.
 - Emit `habitat-surfaces` events to the webview; bump `revision` when segments or HWND change.
 

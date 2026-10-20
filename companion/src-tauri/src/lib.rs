@@ -417,8 +417,23 @@ fn spawn_live_uia_thread(app: tauri::AppHandle) {
                         .map(|s| s.hwnd() != bounds.hwnd)
                         .unwrap_or(true);
                     if hwnd_changed {
+                        // Timed apart from `scan_started`: a slow window lookup here delays the
+                        // first geometry for a new HWND (overlay shows stale ledges, pet rejects
+                        // pointer samples) yet would not appear in `uia/scan` `duration_ms`.
+                        let connect_started = Instant::now();
                         uia_session = match surface_mapper::LiveUiaSession::connect(bounds.hwnd) {
-                            Ok(s) => Some(s),
+                            Ok(s) => {
+                                runtime_log::debug(
+                                    "surface-mapper",
+                                    "uia_connect",
+                                    &format!(
+                                        "hwnd={:#x} duration_ms={}",
+                                        bounds.hwnd,
+                                        connect_started.elapsed().as_millis()
+                                    ),
+                                );
+                                Some(s)
+                            }
                             Err(e) => {
                                 runtime_log::error(
                                     "surface-mapper",
