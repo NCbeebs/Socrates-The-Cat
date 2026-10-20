@@ -9,6 +9,7 @@ For installation and normal use, see the [repository README](../README.md). Run 
 | `npm ci` | Install the locked npm dependencies, including build tools |
 | `npm link` | Once per checkout: register `socrates` on your `PATH` (see root README) |
 | `socrates` / `npm start` | Source launch with activity journal and diagnostics (`npm start` without linking) |
+| `socrates --check-updates` | Compare this `main` checkout to upstream GitHub (no launch; exit 1 on check failure). Bypasses the 24h cache but never a GitHub-imposed wait |
 | `npm run debug` / `socrates --debug` | Add HUD, surface outlines, structured debug records, and raw tool output |
 | `npm run tauri:dev` | Direct native development launch, without the journal launcher |
 | `npm run tauri:dev:debug` | Direct native launch with `HABITAT_DEBUG=1` |
@@ -40,6 +41,9 @@ Set overrides in your shell before launch. No `.env` file is needed. Boolean fla
 | `HABITAT_FOREGROUND_HIDE_MS` | 180 | Delay hiding after focus leaves the IDE |
 | `SOCRATES_LOG_DIR` | `%LOCALAPPDATA%\Socrates\logs` | Use a dedicated directory for logs and automatic retention cleanup |
 | `SOCRATES_SESSION_ID` | generated | Launcher sets a UUID for its child; direct native launches generate a timestamp/process ID fallback |
+| `SOCRATES_CHECK_UPDATES` | off | When `1`, launcher compares `main` to canonical upstream on GitHub (async; does not block `tauri dev`). Sends local SHA + IP; 24h cache in `%LOCALAPPDATA%\Socrates\update-check-cache.json`, serialized across launches by `update-check-cache.json.lock` |
+| `SOCRATES_UPDATE_REPO` | from `package.json` | Override upstream `owner/repo` (defaults to NCbeebs/Socrates-The-Cat) |
+| `SOCRATES_UPDATE_BRANCH` | `main` | Branch compared against upstream; must be a valid git branch name |
 
 `socrates --debug` sets both `HABITAT_DEBUG=1` and `HABITAT_DEBUG_LOG=1`. `HABITAT_DEBUG=1` alone enables native debug records, but the normal launcher displays those records only when `HABITAT_DEBUG_LOG` is also enabled. Presentation subflags can override the umbrella flag.
 

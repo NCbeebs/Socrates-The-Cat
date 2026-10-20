@@ -14,6 +14,7 @@ function fixture(t, withCli = true, source) {
   const launcher = path.join(packageDir, "bin", "socrates.js");
   copyFileSync(path.resolve(__dirname, "../bin/socrates.js"), launcher);
   copyFileSync(path.resolve(__dirname, "../bin/log-storage.js"), path.join(packageDir, "bin", "log-storage.js"));
+  copyFileSync(path.resolve(__dirname, "../bin/check-updates.js"), path.join(packageDir, "bin", "check-updates.js"));
   const logDir = path.join(root, "logs");
   if (withCli) {
     const cliDir = path.join(packageDir, "node_modules", "@tauri-apps", "cli");
@@ -64,10 +65,13 @@ test("help and invalid arguments do not launch Tauri", (t) => {
   const { run } = fixture(t, false);
   assert.equal(run("--help").status, 0);
   assert.match(run("-h").stdout, /Usage: socrates/);
+  assert.match(run("--help").stdout, /SOCRATES_CHECK_UPDATES/);
   const invalid = run("--unknown");
   assert.equal(invalid.status, 1);
   assert.match(invalid.stderr, /Unknown arguments/);
   assert.equal(run("--debug", "extra").status, 1);
+  assert.equal(run("--check-updates", "--debug").status, 1);
+  assert.equal(run("--help", "--debug").status, 1);
 });
 
 test("missing dependencies produce an actionable error", (t) => {
