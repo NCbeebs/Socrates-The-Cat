@@ -12,7 +12,6 @@ import type {
   SitLookDef,
   SurfaceSeg,
 } from "./types";
-import { fallProbe, setFallProbeEnabled as configureFallProbe } from "./fall-probe";
 import { SashMatcher, type TrackedSash } from "./sash-matcher";
 
 export type PetMotionPhase =
@@ -113,12 +112,8 @@ type SupportAttachment =
     };
 
 const GRAVITY_LOCAL = 1400;
-/** Snap or recover when airborne this long without a successful landing. */
-const FALL_AIRBORNE_RECOVER_MS = 2800;
-/** Prefer ledges at/under the foot when picking a recovery target. */
-const FALL_RECOVER_NEAREST_LEDGE_PX = 8;
-/** Re-home grounded attachment when its ledge id is missing from snapshots. */
-const ATTACHMENT_LEDGE_MISSING_MS = 800;
+/** Synthetic walkable at `safeFootBounds().y1`; not from UIA. */
+export const HABITAT_WINDOW_FLOOR_LEDGE_ID = "habitat:window-floor";
 const FALL_ANIM = "fall";
 const FALL_AIR_LAST_CELL = 5;
 const FALL_LAND_FIRST_CELL = 6;
@@ -576,12 +571,13 @@ export class HabitatPet {
   /** Fallback dream rest timer when segmented play is unavailable; from `activities.sleep` minMs/maxMs. */
   private sleepRestMsLeft = 0;
   private vyLocal = 0;
-  private fallAirborneMs = 0;
-  private attachmentLedgeMissingMs = 0;
-  /** Ledge id for the current missing-support grace window (`tickAttachmentLedgeRecovery`). */
-  private attachmentLedgeMissingWatchId: string | null = null;
   private awaitGeometryMs = 0;
   private lastSurfaceRevision = 0;
+  private lastGeometryHwnd = 0;
+  /** After HWND swap: ignore UIA ledges until the window floor landing completes. */
+  private fallWindowFloorOnly = false;
+  /** `spawnOnBestLedge` is for first placement only, not mid-session recovery. */
+  private hasInitialSpawn = false;
   /** IDE-local px traveled while walking; drives walk frame phase when `stridePixelsPerLoop` is set. */
   private walkOdometer = 0;
   /** Previous finalized sample for swept reach; `targetHwnd` must match for segment tests. */
@@ -647,9 +643,6 @@ export class HabitatPet {
   private portalCooldownUntilMs = 0;
   private dividerSlidePhase: DividerSlidePhase = "awake";
   private slideRoute: DividerSlideRoute | null = null;
-  /** TEMPORARY: `fall-probe.ts` heartbeat throttle (remove with fall probe). */
-  private fallProbeLastBeatMs = 0;
-  private fallProbeSignature = "";
 
   constructor(manifest: PetManifest, clipUrls: Record<string, string>) {
     this.habitat = manifest.habitat;
@@ -660,11 +653,6 @@ export class HabitatPet {
   /** Enables reach outline + sample marker in `PetDrawState.pointerDebug` (companion debug build). */
   setPointerDebugEnabled(enabled: boolean): void {
     this.pointerDebugEnabled = enabled;
-  }
-
-  /** TEMPORARY — gates `pet/fall_probe` debug lines (`socrates --debug`). */
-  setFallProbeEnabled(enabled: boolean): void {
-    configureFallProbe(enabled);
   }
 
   /** Decode referenced clips, cache their sizes, and return URLs for SVG playback. */
@@ -728,6 +716,16 @@ export class HabitatPet {
       surfaceSource: "file",
     };
     const geometryStale = this.geometryIsStale(meta);
+    if (
+      meta.targetHwnd !== 0 &&
+      this.lastGeometryHwnd !== 0 &&
+      meta.targetHwnd !== this.lastGeometryHwnd
+    ) {
+      this.onIdeWindowChanged();
+    }
+    if (meta.targetHwnd !== 0) {
+      this.lastGeometryHwnd = meta.targetHwnd;
+    }
     const ledges = this.collectLedges(surfaces);
     const sashTracks = this.sashMatcher.ingest(
       this.collectHorizontalSashes(surfaces),
@@ -796,8 +794,6 @@ export class HabitatPet {
         }
         this.tickFallAnimation(dtMs);
         this.tickPointerReachBookkeeping(this.frameValidatedPointer);
-        this.maybeFallProbeTransition(0, surfaceRevision);
-        this.tickFallProbeHeartbeat(0, surfaceRevision);
         return this.toDrawState(scale, sx, sy);
       }
       if (!this.attachment) {
@@ -821,12 +817,14 @@ export class HabitatPet {
     }
 
     if (
+      !this.hasInitialSpawn &&
       !this.attachment &&
       this.awaitGeometryMs <= 0 &&
       this.motionPhase !== "falling"
     ) {
       this.spawnOnBestLedge(ledges);
       if (this.attachment) {
+        this.hasInitialSpawn = true;
         this.motionPhase = "grounded";
       }
     }
@@ -834,22 +832,16 @@ export class HabitatPet {
     if (this.motionPhase === "await_geometry" && this.awaitGeometryMs <= 0) {
       if (this.attachment) {
         if (this.fallPhase !== null) {
-          fallProbe(
-            "await_geometry_complete_land",
-            `fall=${this.fallPhase} att=ledge:${this.attachment.kind === "ledge" ? this.attachment.surfaceId : "?"}`,
-          );
           this.completeFallLanding();
         } else {
           this.motionPhase = "grounded";
         }
       } else {
-        fallProbe("await_geometry_resume_fall", "no attachment");
         this.motionPhase = "falling";
       }
     }
 
     if (this.motionPhase === "grounded" && this.fallPhase !== null) {
-      fallProbe("grounded_reconcile_fall", `fall=${this.fallPhase}`);
       this.completeFallLanding();
     }
 
@@ -858,7 +850,6 @@ export class HabitatPet {
         this.motionPhase === "await_geometry") &&
       this.dividerSlidePhase === "awake"
     ) {
-      this.tickAttachmentLedgeRecovery(ledges, dtMs);
       this.syncGroundedAttachment(ledges, sashTracks, sy, scale);
     }
 
@@ -1023,8 +1014,6 @@ export class HabitatPet {
 
     this.tickPointerReachBookkeeping(this.frameValidatedPointer);
 
-    this.maybeFallProbeTransition(ledges.length, surfaceRevision);
-    this.tickFallProbeHeartbeat(ledges.length, surfaceRevision);
     return this.toDrawState(scale, sx, sy);
   }
 
@@ -1372,6 +1361,40 @@ export class HabitatPet {
   }
 
   /** Convert sprite extents from overlay pixels to the UIA geometry's local coordinates. */
+  private windowFloorLedge(): Ledge {
+    const [px, py] = this.habitat.pivot;
+    const safe = this.safeFootBounds([px, py]);
+    const margin = this.footMarginLocal();
+    const x0 = safe.x0 + margin;
+    const x1 = safe.x1 - margin;
+    return {
+      id: HABITAT_WINDOW_FLOOR_LEDGE_ID,
+      role: "ledge",
+      x0,
+      x1,
+      y: safe.y1,
+      length: Math.max(0, x1 - x0),
+      confidence: 1,
+    };
+  }
+
+  private onIdeWindowChanged(): void {
+    this.fallIgnoreLedgeId = null;
+    this.awaitGeometryMs = 0;
+    if (this.motionPhase === "cling") {
+      this.clingSubPhase = null;
+    }
+    if (this.motionPhase !== "falling") {
+      this.beginFall(true);
+    } else {
+      this.attachment = null;
+      this.fallPhase = "airborne";
+      this.frameIndex = this.fallAirHoldFrameIndex();
+      this.animationKey = FALL_ANIM;
+    }
+    this.fallWindowFloorOnly = true;
+  }
+
   private safeFootBounds([px, py]: [number, number]): ReachBox {
     const [fw, fh] = this.habitat.grid.frameSize;
     const inset = this.windowInset();
@@ -1423,6 +1446,15 @@ export class HabitatPet {
     const att = this.attachment;
     if (!att || att.kind !== "ledge") {
       return false;
+    }
+    if (att.surfaceId === HABITAT_WINDOW_FLOOR_LEDGE_ID) {
+      const floor = this.windowFloorLedge();
+      const margin = this.footMarginLocal();
+      return (
+        this.localX >= floor.x0 - margin &&
+        this.localX <= floor.x1 + margin &&
+        Math.abs(this.localY - floor.y) <= 6
+      );
     }
     const ledge = ledges.find((l) => l.id === att.surfaceId);
     if (!ledge) {
@@ -2489,64 +2521,10 @@ export class HabitatPet {
       return null;
     }
     const id = this.attachment.surfaceId;
+    if (id === HABITAT_WINDOW_FLOOR_LEDGE_ID) {
+      return this.windowFloorLedge();
+    }
     return ledges.find((l) => l.id === id) ?? null;
-  }
-
-  private resetAttachmentLedgeMissingTimer(): void {
-    this.attachmentLedgeMissingMs = 0;
-    this.attachmentLedgeMissingWatchId = null;
-  }
-
-  private tickAttachmentLedgeRecovery(ledges: Ledge[], dtMs: number): void {
-    const att = this.attachment;
-    if (att?.kind !== "ledge") {
-      this.resetAttachmentLedgeMissingTimer();
-      return;
-    }
-    if (this.attachmentLedgeMissingWatchId !== att.surfaceId) {
-      this.attachmentLedgeMissingWatchId = att.surfaceId;
-      this.attachmentLedgeMissingMs = 0;
-    }
-    if (this.ledgeFromAttachment(ledges)) {
-      this.attachmentLedgeMissingMs = 0;
-      return;
-    }
-    if (!ledges.length) {
-      return;
-    }
-    this.attachmentLedgeMissingMs += dtMs;
-    if (this.attachmentLedgeMissingMs < ATTACHMENT_LEDGE_MISSING_MS) {
-      return;
-    }
-    fallProbe(
-      "attachment_ledge_rehome",
-      `missing=${att.surfaceId} ledges=${ledges.length} ms=${Math.round(this.attachmentLedgeMissingMs)}`,
-    );
-    this.rehomeAttachmentToNearestLedge(ledges);
-    this.attachmentLedgeMissingMs = 0;
-  }
-
-  /** Grounded foot still under X but UIA dropped the attachment id — snap to the nearest walkable Y. */
-  private rehomeAttachmentToNearestLedge(ledges: Ledge[]): void {
-    const margin = this.footMarginLocal();
-    let best: Ledge | null = null;
-    let bestScore = Infinity;
-    for (const l of ledges) {
-      if (this.localX < l.x0 - margin || this.localX > l.x1 + margin) {
-        continue;
-      }
-      const score = Math.abs(l.y - this.localY);
-      if (score < bestScore) {
-        bestScore = score;
-        best = l;
-      }
-    }
-    if (best) {
-      this.attachToLedgePreserveFoot(best);
-      this.syncedSupportLedgeY = best.y;
-    } else {
-      this.spawnOnBestLedge(ledges);
-    }
   }
 
   private syncGroundedAttachment(
@@ -2558,8 +2536,14 @@ export class HabitatPet {
     const ledge = this.ledgeFromAttachment(ledges);
     if (!ledge) {
       this.finishPortal();
-      if (!this.attachment && this.awaitGeometryMs <= 0) {
-        this.spawnOnBestLedge(ledges);
+      const att = this.attachment;
+      if (
+        att?.kind === "ledge" &&
+        att.surfaceId !== HABITAT_WINDOW_FLOOR_LEDGE_ID &&
+        this.awaitGeometryMs <= 0 &&
+        this.motionPhase !== "falling"
+      ) {
+        this.beginFallFromSupportDrop(att.surfaceId);
       }
       return;
     }
@@ -2587,7 +2571,6 @@ export class HabitatPet {
     if (this.motionPhase === "falling") {
       return;
     }
-    fallProbe("support_drop", `ignoreLedge=${ignoreLedgeId ?? "none"}`);
     this.fallIgnoreLedgeId = ignoreLedgeId;
     this.syncedSupportLedgeY = null;
     this.awaitGeometryMs = 0;
@@ -2611,10 +2594,7 @@ export class HabitatPet {
     this.motionPhase = "falling";
     this.fallPhase = "airborne";
     this.vyLocal = 0;
-    this.fallAirborneMs = 0;
     this.attachment = null;
-    this.resetAttachmentLedgeMissingTimer();
-    fallProbe("begin_fall", `localY=${this.localY.toFixed(1)} localX=${this.localX.toFixed(1)}`);
     this.activityId = "idle";
     this.animationKey = FALL_ANIM;
     this.frameIndex = 0;
@@ -2679,25 +2659,15 @@ export class HabitatPet {
   }
 
   private completeFallLanding() {
-    const att =
-      this.attachment?.kind === "ledge" ? this.attachment.surfaceId : "none";
-    fallProbe(
-      "complete_land",
-      `att=${att} fi=${this.frameIndex} local=(${this.localX.toFixed(1)},${this.localY.toFixed(1)})`,
-    );
     this.fallPhase = null;
     this.fallIgnoreLedgeId = null;
-    this.fallAirborneMs = 0;
-    this.resetAttachmentLedgeMissingTimer();
-    if (this.attachment?.kind === "ledge") {
-      this.attachmentLedgeMissingWatchId = this.attachment.surfaceId;
-    }
+    this.fallWindowFloorOnly = false;
     this.motionPhase = "grounded";
     this.startIdle();
   }
 
   /** Snap foot to ledge Y and start the land clip (post-step overshoot is expected). */
-  private establishFallLanding(ledge: Ledge, reason: string): void {
+  private establishFallLanding(ledge: Ledge): void {
     this.localY = ledge.y;
     this.attachToLedgePreserveFoot(ledge);
     this.syncedSupportLedgeY = ledge.y;
@@ -2705,13 +2675,26 @@ export class HabitatPet {
     this.frameIndex = this.fallLandStartFrameIndex();
     this.frameAccumulator = 0;
     this.vyLocal = 0;
-    this.fallAirborneMs = 0;
-    this.resetAttachmentLedgeMissingTimer();
-    this.attachmentLedgeMissingWatchId = ledge.id;
-    fallProbe(
-      "ledge_contact",
-      `reason=${reason} ledge=${ledge.id} y=${ledge.y.toFixed(1)} landFi=${this.frameIndex} local=(${this.localX.toFixed(1)},${this.localY.toFixed(1)})`,
-    );
+    this.fallWindowFloorOnly = false;
+  }
+
+  private findWindowFloorCrossing(
+    x: number,
+    y0: number,
+    y1: number,
+  ): Ledge | null {
+    if (y1 <= y0 + 0.01) {
+      return null;
+    }
+    const floor = this.windowFloorLedge();
+    const margin = this.footMarginLocal();
+    if (x < floor.x0 - margin || x > floor.x1 + margin) {
+      return null;
+    }
+    if (floor.y > y0 - 2 && floor.y <= y1 + 4) {
+      return floor;
+    }
+    return null;
   }
 
   private stepFall(ledges: Ledge[], dt: number) {
@@ -2722,66 +2705,30 @@ export class HabitatPet {
       if (this.attachment?.kind === "ledge") {
         return;
       }
-      fallProbe(
-        "land_detach_reairborne",
-        `ledges=${ledges.length} att=${this.attachment?.kind ?? "none"} fi=${this.frameIndex}`,
-      );
       this.attachment = null;
       this.fallPhase = "airborne";
       this.frameIndex = this.fallAirHoldFrameIndex();
-    }
-
-    if (this.fallPhase === "airborne") {
-      this.fallAirborneMs += dt * 1000;
     }
 
     const y0 = this.localY;
     this.vyLocal += GRAVITY_LOCAL * dt;
     this.localY += this.vyLocal * dt;
 
-    const land = this.findLandingLedgeCrossing(ledges, this.localX, y0, this.localY);
+    const crossLedges = this.fallWindowFloorOnly ? [] : ledges;
+    const land = this.findLandingLedgeCrossing(
+      crossLedges,
+      this.localX,
+      y0,
+      this.localY,
+    );
     if (land) {
-      this.establishFallLanding(land, "crossing");
+      this.establishFallLanding(land);
       return;
     }
 
-    if (
-      this.fallPhase === "airborne" &&
-      this.fallAirborneMs >= FALL_AIRBORNE_RECOVER_MS
-    ) {
-      this.tryRecoverEndlessFall(ledges);
-    }
-  }
-
-  /** HWND/UIA churn or missed crossings: place the foot on the nearest ledge under X. */
-  private tryRecoverEndlessFall(ledges: Ledge[]): void {
-    const margin = this.footMarginLocal();
-    let best: Ledge | null = null;
-    let bestScore = Infinity;
-    for (const l of ledges) {
-      if (this.localX < l.x0 - margin || this.localX > l.x1 + margin) {
-        continue;
-      }
-      const dy = Math.abs(l.y - this.localY);
-      const below = l.y >= this.localY - FALL_RECOVER_NEAREST_LEDGE_PX ? 0 : 5000;
-      const score = dy + below;
-      if (score < bestScore) {
-        bestScore = score;
-        best = l;
-      }
-    }
-    if (best) {
-      fallProbe(
-        "fall_recover_snap",
-        `ledge=${best.id} y=${best.y.toFixed(1)} localY=${this.localY.toFixed(1)} ms=${Math.round(this.fallAirborneMs)}`,
-      );
-      this.establishFallLanding(best, "recover_snap");
-      return;
-    }
-    if (ledges.length > 0) {
-      fallProbe("fall_recover_spawn", `ledges=${ledges.length}`);
-      this.spawnOnBestLedge(ledges);
-      this.completeFallLanding();
+    const floor = this.findWindowFloorCrossing(this.localX, y0, this.localY);
+    if (floor) {
+      this.establishFallLanding(floor);
     }
   }
 
@@ -3909,57 +3856,6 @@ export class HabitatPet {
     this.frameIndex = 0;
     this.frameAccumulator = 0;
     this.activityMsLeft = this.idleSlotDurationMs();
-  }
-
-  private fallProbeAttachmentLabel(): string {
-    const att = this.attachment;
-    if (!att) {
-      return "none";
-    }
-    if (att.kind === "ledge") {
-      return `ledge:${att.surfaceId}`;
-    }
-    return `sash:${att.trackKey}`;
-  }
-
-  private logFallProbe(
-    event: string,
-    ledgesLen: number,
-    revision: number,
-  ): void {
-    fallProbe(
-      event,
-      `motion=${this.motionPhase} fall=${this.fallPhase ?? "null"} att=${this.fallProbeAttachmentLabel()} anim=${this.animationKey} fi=${this.frameIndex} acc=${this.frameAccumulator.toFixed(0)} ledges=${ledgesLen} rev=${revision} awaitMs=${Math.round(this.awaitGeometryMs)} vy=${this.vyLocal.toFixed(1)}`,
-    );
-  }
-
-  private maybeFallProbeTransition(ledgesLen: number, revision: number): void {
-    const sig = [
-      this.motionPhase,
-      this.fallPhase ?? "null",
-      this.fallProbeAttachmentLabel(),
-      this.animationKey,
-      this.dividerSlidePhase,
-      this.clingSubPhase ?? "null",
-      this.sleepPhase,
-    ].join("|");
-    if (sig === this.fallProbeSignature) {
-      return;
-    }
-    this.fallProbeSignature = sig;
-    this.logFallProbe("transition", ledgesLen, revision);
-  }
-
-  private tickFallProbeHeartbeat(ledgesLen: number, revision: number): void {
-    if (this.motionPhase !== "falling" && this.fallPhase === null) {
-      return;
-    }
-    const now = performance.now();
-    if (now - this.fallProbeLastBeatMs < 1000) {
-      return;
-    }
-    this.fallProbeLastBeatMs = now;
-    this.logFallProbe("heartbeat", ledgesLen, revision);
   }
 
   private armActivityCooldown(activityId: string): void {

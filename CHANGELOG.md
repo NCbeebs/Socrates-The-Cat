@@ -4,8 +4,7 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ## Unreleased
 
-- Fix fall landing freeze: crossing-based landing with `establishFallLanding()` (snap foot to ledge Y instead of rejecting overshoot), continue the land clip when `collectLedges` omits the contact ledge, timed recovery when geometry returns below every ledge, and bounded re-home when a grounded attachment id disappears from UIA snapshots (missing-ledge grace resets on new attachment / `beginFall`).
-- TEMPORARY: `pet/fall_probe` debug events under `socrates --debug` (remove `fall-probe.ts` when the live freeze is confirmed fixed).
+- Fix fall landing freeze: crossing-based landing with `establishFallLanding()` (snap foot to ledge Y instead of rejecting overshoot), continue the land clip when `collectLedges` omits the contact ledge, and treat the IDE window bottom (`habitat:window-floor`) as a real walkable surface (HWND swaps fall to floor; ordinary falls use UIA ledges then floor; no timed recovery teleport or missing-ledge re-home).
 - README and `.github/FUNDING.yml` link optional [Buy Me a Coffee](https://buymeacoffee.com/generalchromodynamics) support for General Chromodynamics.
 - Restore documented install flow: `npm ci`, `npm link`, then `socrates` as the primary path (`npm start` remains the no-link alternative).
 - Windows companion for VS Code and Cursor, using live UI Automation geometry and a click-through Tauri overlay. Follows foreground windows of the IDE selected at launch.
@@ -18,7 +17,6 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ### Known limitations
 
-- Grounded attachment recovery can inherit a missing-ledge timeout across a fall and re-home a new attachment too early.
-- Crossing-based landing resolves the reproduced endless airborne hold at tested frame intervals; confirmation against the live UIA freeze remains pending.
+- HWND swaps intentionally drop UIA support and fall to the window floor; horizontal position is preserved within the new window bounds.
 - Windows only; installation requires a source checkout and the Node/Rust build toolchains. No published installer or IDE extension.
 - Broader VS Code layout testing is still needed. A previously reported startup animation pause has a fallback in place, but its effectiveness across cold starts remains unconfirmed.
