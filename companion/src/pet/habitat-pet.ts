@@ -693,9 +693,10 @@ export class HabitatPet {
   private carryOwnerHwnd = 0;
   /** Drop uses `carried_release` + crossing-only ledge resolve (no status-bar snap). */
   private fallFromCarry = false;
-  /** Cosmetic pendulum while `carrySubPhase === "held"`; reset in `resetCarrySwing`. */
+  /** Cosmetic tilt while `carrySubPhase === "held"`; reset in `resetCarrySwing`. */
   private carrySwingDeg = 0;
-  private carryPrevGripLocalX: number | null = null;
+  private carrySwingTargetDeg = 0;
+  private carrySwingSample: { x: number; observedAtMs: number } | null = null;
   /** IDE-local px traveled while walking; drives walk frame phase when `stridePixelsPerLoop` is set. */
   private walkOdometer = 0;
   /** Previous finalized sample for swept reach; `targetHwnd` must match for segment tests. */
@@ -2963,7 +2964,8 @@ export class HabitatPet {
   /** Clears drag swing so release/fall draw is upright (`draw-pet.ts` reads `swingDeg`). */
   private resetCarrySwing(): void {
     this.carrySwingDeg = 0;
-    this.carryPrevGripLocalX = null;
+    this.carrySwingTargetDeg = 0;
+    this.carrySwingSample = null;
   }
 
   /** Input loss / HWND cancel — not a deliberate user drop. */
@@ -3028,25 +3030,31 @@ export class HabitatPet {
     }
   }
 
-  /** Pendulum tilt from horizontal drag speed; pivot is the grip (`localX`/`localY`). */
+  /** Sample cursor speed at poll cadence, then ease the tilt on the animation clock. */
   private tickCarrySwing(dtMs: number, input: IdeLocalPointer | null): void {
-    const coords = idePointerCoords(input);
-    if (!coords || dtMs <= 0) {
+    if (dtMs <= 0) {
       return;
     }
-    const x = coords.x;
-    if (this.carryPrevGripLocalX !== null) {
-      const vx = ((x - this.carryPrevGripLocalX) / dtMs) * 1000;
-      const mirror = this.carryFacingLocked ?? this.facingLeft;
-      const signedVx = mirror ? -vx : vx;
-      const targetDeg = Math.max(
-        -CARRY_SWING_MAX_DEG,
-        Math.min(CARRY_SWING_MAX_DEG, signedVx * CARRY_SWING_VEL_TO_DEG),
-      );
-      const alpha = 1 - Math.exp((-CARRY_SWING_SMOOTH_PER_SEC * dtMs) / 1000);
-      this.carrySwingDeg += (targetDeg - this.carrySwingDeg) * alpha;
+    if (!input || input.x == null || input.y == null) {
+      this.carrySwingSample = null;
+      this.carrySwingTargetDeg = 0;
+    } else {
+      const previous = this.carrySwingSample;
+      if (!previous || input.observedAtMs > previous.observedAtMs) {
+        if (previous) {
+          const vx = ((input.x - previous.x) * 1000) /
+            (input.observedAtMs - previous.observedAtMs);
+          // SVG rotates after mirroring, so drag direction is independent of facing.
+          this.carrySwingTargetDeg = Math.max(
+            -CARRY_SWING_MAX_DEG,
+            Math.min(CARRY_SWING_MAX_DEG, vx * CARRY_SWING_VEL_TO_DEG),
+          );
+        }
+        this.carrySwingSample = { x: input.x, observedAtMs: input.observedAtMs };
+      }
     }
-    this.carryPrevGripLocalX = x;
+    const alpha = 1 - Math.exp((-CARRY_SWING_SMOOTH_PER_SEC * dtMs) / 1000);
+    this.carrySwingDeg += (this.carrySwingTargetDeg - this.carrySwingDeg) * alpha;
   }
 
   private advanceCarriedPickup(

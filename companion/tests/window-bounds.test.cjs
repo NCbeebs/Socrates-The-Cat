@@ -738,21 +738,77 @@ test("carry drag swing follows horizontal motion and resets on release", () => {
   pet.carryFacingLocked = false;
   pet.animationKey = "carried_hold";
   pet.activityId = "user_carry";
-  pet.carrySwingDeg = 0;
-  pet.carryPrevGripLocalX = 400;
-  const ptr = (x, down = true) => ({
+  const t0 = Date.now();
+  const ptr = (x, observedAtMs, down = true) => ({
     x,
-    y: 580,
+    y: 300,
     primaryButtonDown: down,
     targetHwnd: 1,
-    observedAtMs: Date.now(),
+    observedAtMs,
   });
-  update(pet, surfaces, viewport, 1, 1, 50, ptr(460));
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(400, t0));
+  update(pet, surfaces, viewport, 1, 1, 50, ptr(460, t0 + 50));
   const dragged = pet.toDrawState(pet.viewScale, 1, 1);
-  assert.ok(Math.abs(dragged.swingDeg) > 0.5);
-  update(pet, surfaces, viewport, 1, 1, 16, ptr(460, false));
+  assert.ok(dragged.swingDeg > 0.5 && dragged.swingDeg <= 11);
+  assert.equal(dragged.swingPivotX, 460);
+  assert.equal(dragged.swingPivotY, 300);
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(460, t0 + 100, false));
   const released = pet.toDrawState(pet.viewScale, 1, 1);
   assert.equal(released.swingDeg, 0);
+});
+
+test("carry swing follows 50 ms samples consistently across render rates and facing", () => {
+  for (const facingLeft of [false, true]) {
+    for (const direction of [-1, 1]) {
+      for (const frameMs of [10, 25]) {
+        const pet = makePet();
+        pet.carryFacingLocked = facingLeft;
+        const sample = (t) => {
+          const pollTime = Math.floor(t / 50) * 50;
+          return {
+            x: 400 + direction * Math.min(pollTime, 1000) * 0.1,
+            y: 300,
+            primaryButtonDown: true,
+            targetHwnd: 1,
+            observedAtMs: 1000 + pollTime,
+          };
+        };
+        pet.tickCarrySwing(frameMs, sample(0));
+        for (let t = frameMs; t <= 1000; t += frameMs) {
+          pet.tickCarrySwing(frameMs, sample(t));
+          if (t >= 800) {
+            assert.ok(
+              Math.abs(pet.carrySwingDeg - direction * 5.5) < 0.01,
+              `steady swing: facingLeft=${facingLeft}, frameMs=${frameMs}, angle=${pet.carrySwingDeg}`,
+            );
+          }
+        }
+        for (let t = 1000 + frameMs; t <= 2000; t += frameMs) {
+          pet.tickCarrySwing(frameMs, sample(t));
+        }
+        assert.ok(Math.abs(pet.carrySwingDeg) < 0.01, "stopping settles upright");
+      }
+    }
+  }
+});
+
+test("carry swing settles on input loss and does not kick when coordinates return", () => {
+  const pet = makePet();
+  const sample = (x, t) => ({ x, y: 300, primaryButtonDown: true, targetHwnd: 1, observedAtMs: t });
+  pet.tickCarrySwing(16, sample(400, 1000));
+  pet.tickCarrySwing(50, sample(460, 1050));
+  const movingAngle = pet.carrySwingDeg;
+  for (let i = 0; i < 10; i++) pet.tickCarrySwing(40, null);
+  assert.ok(Math.abs(pet.carrySwingDeg) < movingAngle * 0.02);
+  const settledAngle = pet.carrySwingDeg;
+  pet.tickCarrySwing(16, sample(800, 1500));
+  assert.ok(Math.abs(pet.carrySwingDeg) <= settledAngle, "returning input seeds a new velocity sample");
+
+  pet.motionPhase = "carried";
+  pet.carrySubPhase = "held";
+  pet.animationKey = "carried_hold";
+  pet.abortCarryInterrupted();
+  assert.equal(pet.carrySwingDeg, 0, "cancellation clears swing immediately");
 });
 
 test("carried hold ping-pongs authoring cells 7-11 (manifest indices 6-10)", () => {
