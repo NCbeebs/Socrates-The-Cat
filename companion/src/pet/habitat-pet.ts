@@ -3116,7 +3116,6 @@ export class HabitatPet {
     }
     this.frameIndex = holdStart >= 0 ? holdStart : 0;
     this.frameAccumulator = 0;
-    this.resetCarrySwing();
     this.syncCarryGripToPointer(input);
   }
 

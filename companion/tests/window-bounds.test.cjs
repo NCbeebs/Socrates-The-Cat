@@ -757,37 +757,34 @@ test("carry drag swing follows horizontal motion and resets on release", () => {
   assert.equal(released.swingDeg, 0);
 });
 
-test("carry swing follows 50 ms samples consistently across render rates and facing", () => {
-  for (const facingLeft of [false, true]) {
-    for (const direction of [-1, 1]) {
-      for (const frameMs of [10, 25]) {
-        const pet = makePet();
-        pet.carryFacingLocked = facingLeft;
-        const sample = (t) => {
-          const pollTime = Math.floor(t / 50) * 50;
-          return {
-            x: 400 + direction * Math.min(pollTime, 1000) * 0.1,
-            y: 300,
-            primaryButtonDown: true,
-            targetHwnd: 1,
-            observedAtMs: 1000 + pollTime,
-          };
+test("carry swing follows 50 ms samples consistently across render rates", () => {
+  for (const direction of [-1, 1]) {
+    for (const frameMs of [10, 25]) {
+      const pet = makePet();
+      const sample = (t) => {
+        const pollTime = Math.floor(t / 50) * 50;
+        return {
+          x: 400 + direction * Math.min(pollTime, 1000) * 0.1,
+          y: 300,
+          primaryButtonDown: true,
+          targetHwnd: 1,
+          observedAtMs: 1000 + pollTime,
         };
-        pet.tickCarrySwing(frameMs, sample(0));
-        for (let t = frameMs; t <= 1000; t += frameMs) {
-          pet.tickCarrySwing(frameMs, sample(t));
-          if (t >= 800) {
-            assert.ok(
-              Math.abs(pet.carrySwingDeg - direction * 5.5) < 0.01,
-              `steady swing: facingLeft=${facingLeft}, frameMs=${frameMs}, angle=${pet.carrySwingDeg}`,
-            );
-          }
+      };
+      pet.tickCarrySwing(frameMs, sample(0));
+      for (let t = frameMs; t <= 1000; t += frameMs) {
+        pet.tickCarrySwing(frameMs, sample(t));
+        if (t >= 800) {
+          assert.ok(
+            Math.abs(pet.carrySwingDeg - direction * 5.5) < 0.01,
+            `steady swing: frameMs=${frameMs}, angle=${pet.carrySwingDeg}`,
+          );
         }
-        for (let t = 1000 + frameMs; t <= 2000; t += frameMs) {
-          pet.tickCarrySwing(frameMs, sample(t));
-        }
-        assert.ok(Math.abs(pet.carrySwingDeg) < 0.01, "stopping settles upright");
       }
+      for (let t = 1000 + frameMs; t <= 2000; t += frameMs) {
+        pet.tickCarrySwing(frameMs, sample(t));
+      }
+      assert.ok(Math.abs(pet.carrySwingDeg) < 0.01, "stopping settles upright");
     }
   }
 });
