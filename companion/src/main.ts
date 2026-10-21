@@ -9,7 +9,6 @@ import {
   type PetPointerDebug,
 } from "./pet/habitat-pet";
 import { petClipUrls } from "./pet/pet-clips";
-import { setPositionJumpProbeSink } from "./pet/position-jump-probe";
 import { ActivityJournal } from "./journal";
 import { createPetLoopClock } from "./pet-loop-clock";
 import {
@@ -215,14 +214,6 @@ async function renderLoop(svg: SVGSVGElement, hud: HTMLElement) {
   const manifest = petManifest as unknown as PetManifest;
   const pet = new HabitatPet(manifest, petClipUrls());
   pet.setPointerDebugEnabled(showPointerDebug);
-  // REMOVE BEFORE NEXT PR: temporary teleport / center-respawn diagnostics (`position-jump-probe.ts`).
-  setPositionJumpProbeSink(
-    verboseLog
-      ? (event, message) => {
-          writeDebug("pet", `position_jump_probe/${event}`, message);
-        }
-      : null,
-  );
   let drawPet: (state: PetDrawState) => void;
   try {
     const clipUrls = await pet.preload();

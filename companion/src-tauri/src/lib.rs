@@ -302,12 +302,14 @@ fn get_habitat_presentation() -> habitat_config::HabitatPresentation {
     *habitat_config::presentation()
 }
 
-/// Global OS cursor in HWND-local pixels (same space as UIA surfaces). `None` if IDE untracked or pointer outside window.
+/// Pointer sample: in-window `x`/`y` when inside the tracked IDE rect, plus logical primary button. `None` only if `GetCursorPos` fails.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct IdeLocalPointer {
-    x: f64,
-    y: f64,
+    /// IDE-local px when the cursor is inside the tracked window; `null` when outside.
+    x: Option<f64>,
+    y: Option<f64>,
+    primary_button_down: bool,
     target_hwnd: isize,
     observed_at_ms: u64,
 }
@@ -672,9 +674,13 @@ mod windows {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, TRUE};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowRect,
-        GetWindowThreadProcessId, IsWindow, IsWindowVisible, GA_ROOT,
+        EnumWindows, GetAncestor, GetCursorPos, GetForegroundWindow, GetSystemMetrics,
+        GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible, GA_ROOT,
+        SM_SWAPBUTTON,
     };
 
     const IDE_PID_REFRESH: Duration = Duration::from_secs(5);
@@ -775,7 +781,19 @@ mod windows {
         Some(bounds)
     }
 
-    /// `GetCursorPos` → window-local; read-only, does not move or capture the cursor (spec §7.3).
+    /// Logical primary button down (`GetAsyncKeyState` high bit; respects swap-mouse).
+    fn primary_button_down() -> bool {
+        unsafe {
+            let vk = if GetSystemMetrics(SM_SWAPBUTTON) != 0 {
+                VK_RBUTTON.0 as i32
+            } else {
+                VK_LBUTTON.0 as i32
+            };
+            (GetAsyncKeyState(vk) as u16 & 0x8000) != 0
+        }
+    }
+
+    /// `GetCursorPos` + primary button; read-only (spec §7.3). Button state is independent of in-window coords.
     pub fn pointer_in_ide_local() -> Option<IdeLocalPointer> {
         let mut pt = POINT::default();
         unsafe {
@@ -783,17 +801,27 @@ mod windows {
                 return None;
             }
         }
-        let ide = resolve_pointer_target_bounds()?;
+        let primary_button_down = primary_button_down();
+        let observed_at_ms = now_ms();
+        let Some(ide) = resolve_pointer_target_bounds() else {
+            return Some(IdeLocalPointer {
+                x: None,
+                y: None,
+                primary_button_down,
+                target_hwnd: 0,
+                observed_at_ms,
+            });
+        };
         let lx = pt.x - ide.x;
         let ly = pt.y - ide.y;
-        if lx < 0 || ly < 0 || lx > ide.width || ly > ide.height {
-            return None;
-        }
+        let in_window =
+            lx >= 0 && ly >= 0 && lx <= ide.width && ly <= ide.height;
         Some(IdeLocalPointer {
-            x: f64::from(lx),
-            y: f64::from(ly),
+            x: in_window.then_some(f64::from(lx)),
+            y: in_window.then_some(f64::from(ly)),
+            primary_button_down,
             target_hwnd: ide.hwnd,
-            observed_at_ms: now_ms(),
+            observed_at_ms,
         })
     }
 

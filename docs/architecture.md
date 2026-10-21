@@ -29,9 +29,9 @@ The overlay window is created with `visible: false`, `focus: false`, and `focusa
 
 ## Pointer
 
-Read-only **Win32 `GetCursorPos`** in Rust → `get_pointer_in_ide_local` (same coordinate space as surfaces). The overlay uses `setIgnoreCursorEvents`; the pet never moves the system cursor.
+Read-only **Win32 `GetCursorPos`** plus **logical primary button** (`GetAsyncKeyState`, swap-mouse aware) in Rust → `get_pointer_in_ide_local` (HWND-local coordinates when the cursor is inside the tracked IDE rect; button state travels with the sample). Returns `None` only when cursor position cannot be read. The overlay uses permanent `setIgnoreCursorEvents`; the pet never moves the system cursor.
 
-Distance tiers and activities are defined in `pet.json` (`pointer_look`, `pointer_alert`, `pointer_pounce`, `pointer_swipe`).
+Proximity reactions use `pet.json` activities `pointer_swipe` and `pointer_pounce` (debug HUD shows the reach box). **Pick up and drag:** ~250 ms click-and-hold inside that same reach box plays `Socs-carried.png`, then release to fall onto a crossed ledge below (`user_carry` in `HabitatPet`, not a weighted activity). Polling at 50 ms cannot guarantee where a press began; IDE clicks and selection still pass through the overlay.
 
 ## Presentation vs geometry vs diagnostics
 

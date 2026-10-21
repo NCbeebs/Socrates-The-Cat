@@ -38,6 +38,14 @@ test("motion and sleep reactions take precedence over the underlying activity", 
   assert.deepEqual(entries.map((e) => e.event), ["falling", "climbing", "sliding", "annoyed"]);
 });
 
+test("carry motion is journaled separately from idle", () => {
+  const entries = [];
+  const journal = new ActivityJournal((entry) => entries.push(entry));
+  journal.observe(state("user_carry", "carried_pickup", "carried"), 0);
+  journal.observe(state("idle", "idle", "grounded"), 100);
+  assert.deepEqual(entries.map((e) => e.event), ["carried", "idle"]);
+});
+
 test("error details preserve stacks, causes and non-Error rejections", () => {
   const error = new Error("asset failed", { cause: new Error("not found") });
   assert.match(errorDetails(error), /asset failed[\s\S]*Caused by: Error: not found/);
