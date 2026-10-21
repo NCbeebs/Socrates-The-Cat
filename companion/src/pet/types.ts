@@ -112,10 +112,22 @@ export interface GeometryMeta {
   surfaceSource: string;
 }
 
-/** Rust `get_pointer_in_ide_local` sample (HWND-local px, same space as UIA surfaces). */
+/** Raw Rust `get_pointer_in_ide_local` sample. */
 export interface IdeLocalPointer {
+  /** Present when the cursor is inside the tracked IDE window rect. */
+  x: number | null;
+  y: number | null;
+  /** Logical primary button; independent of `x`/`y`. */
+  primaryButtonDown: boolean;
+  targetHwnd: number;
+  observedAtMs: number;
+}
+
+/** In-window pointer after `HabitatPet` freshness and HWND checks (`x`/`y` always numbers). */
+export interface IdeLocalPointerCoords {
   x: number;
   y: number;
+  primaryButtonDown: boolean;
   targetHwnd: number;
   observedAtMs: number;
 }

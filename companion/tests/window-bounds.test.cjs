@@ -25,6 +25,8 @@ const {
   convergeSitLookGazeCell,
   shortestSignedAngleDelta,
   SIT_LOOK_ANGLE_SWITCH_MARGIN_DEG,
+  stepCarryInputTransition,
+  CARRY_HOLD_MS,
 } = habitatPetModule;
 const manifest = JSON.parse(readFileSync(path.resolve(__dirname, "../../assets/pets/default-cat/pet.json"), "utf8"));
 const meta = { observedAtMs: Date.now(), targetHwnd: 1, scanSequence: 1, surfaceSource: "file" };
@@ -189,7 +191,13 @@ test("sit look motion sampler resets on HWND change", () => {
   pet.sitLookLastMotionSample = { x: 0, y: 0, t: 0, targetHwnd: 1 };
   pet.sitLookPointerSpeedPxPerSec = 0;
   pet.updateSitLookPointerSpeed(
-    { x: 900, y: 0, targetHwnd: 2, observedAtMs: 50 },
+    {
+      x: 900,
+      y: 0,
+      primaryButtonDown: false,
+      targetHwnd: 2,
+      observedAtMs: 50,
+    },
     50,
   );
   assert.ok(pet.sitLookPointerSpeedPxPerSec < 100);
@@ -206,7 +214,13 @@ test("interrupting swipe from sit faces the cursor on the first swipe frame", ()
   pet.frameIndex = 17;
   pet.localX = 200;
   pet.localY = 595;
-  const pointer = { x: 320, y: 580, targetHwnd: 1, observedAtMs: Date.now() };
+  const pointer = {
+    x: 320,
+    y: 580,
+    primaryButtonDown: false,
+    targetHwnd: 1,
+    observedAtMs: Date.now(),
+  };
   pet.frameValidatedPointer = pointer;
   pet.startPointerSwipe();
   assert.equal(pet.facingLeft, false);
@@ -581,4 +595,227 @@ test("beginFall clears divider slide ownership", () => {
   pet.beginFall();
   assert.equal(pet.dividerSlidePhase, "awake");
   assert.equal(pet.portalPhase, "awake");
+});
+
+test("carry input requires release before arming after startup", () => {
+  let phase = "disarmed";
+  let hold = null;
+  let r = stepCarryInputTransition(phase, hold, true, true, 1000, false);
+  assert.equal(r.phase, "disarmed");
+  assert.equal(r.beginCarry, false);
+  r = stepCarryInputTransition(r.phase, r.holdStartedAtMs, false, false, 1001, false);
+  assert.equal(r.phase, "armed");
+  r = stepCarryInputTransition(r.phase, r.holdStartedAtMs, true, true, 1002, false);
+  assert.equal(r.phase, "hold_pending");
+  r = stepCarryInputTransition(
+    r.phase,
+    r.holdStartedAtMs,
+    true,
+    true,
+    1002 + CARRY_HOLD_MS,
+    false,
+  );
+  assert.equal(r.beginCarry, true);
+});
+
+test("carry pending hold clears on invalid input until release", () => {
+  const pet = makePet();
+  const viewport = { w: 800, h: 600 };
+  const surfaces = [surface("floor", 0, 800, 595)];
+  update(pet, surfaces, viewport);
+  pet.localX = 400;
+  pet.localY = 595;
+  const t0 = Date.now();
+  const ptr = (down, t = Date.now()) => ({
+    x: 400,
+    y: 580,
+    primaryButtonDown: down,
+    targetHwnd: 1,
+    observedAtMs: t,
+  });
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(false, t0));
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(true, t0 + 10));
+  assert.equal(pet.carryInputPhase, "hold_pending");
+  update(pet, surfaces, viewport, 1, 1, 16, null);
+  assert.equal(pet.carryInputPhase, "disarmed");
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(true, t0 + CARRY_HOLD_MS + 500));
+  assert.notEqual(pet.motionPhase, "carried");
+});
+
+test("carry input disarms on press outside reach until release", () => {
+  let r = stepCarryInputTransition("armed", null, true, false, 0, false);
+  assert.equal(r.phase, "disarmed");
+  r = stepCarryInputTransition("disarmed", null, true, true, 100, false);
+  assert.equal(r.phase, "disarmed");
+  r = stepCarryInputTransition("disarmed", null, false, false, 200, false);
+  assert.equal(r.phase, "armed");
+});
+
+test("carry ends on button release while active", () => {
+  const r = stepCarryInputTransition("armed", null, false, false, 0, true);
+  assert.equal(r.endCarry, true);
+});
+
+test("pick up and drop via reach-box hold", () => {
+  const pet = makePet();
+  const viewport = { w: 800, h: 600 };
+  const surfaces = [surface("floor", 0, 800, 595)];
+  update(pet, surfaces, viewport);
+  pet.localX = 400;
+  pet.localY = 595;
+  const ptr = (down, t = Date.now()) => ({
+    x: 400,
+    y: 580,
+    primaryButtonDown: down,
+    targetHwnd: 1,
+    observedAtMs: t,
+  });
+  const t0 = Date.now();
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(false, t0));
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(true, t0 + 10));
+  const held = update(
+    pet,
+    surfaces,
+    viewport,
+    1,
+    1,
+    16,
+    ptr(true, t0 + CARRY_HOLD_MS + 20),
+  );
+  assert.equal(pet.motionPhase, "carried");
+  assert.equal(held.activityId, "user_carry");
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(false, Date.now()));
+  assert.equal(pet.motionPhase, "falling");
+  assert.equal(pet.fallFromCarry, true);
+});
+
+test("abort carry preserves draw Y when switching from grip to fall", () => {
+  const pet = makePet();
+  const viewport = { w: 800, h: 600 };
+  const surfaces = [surface("floor", 0, 800, 595)];
+  update(pet, surfaces, viewport);
+  pet.motionPhase = "carried";
+  pet.carrySubPhase = "held";
+  pet.carryFacingLocked = false;
+  pet.carryOwnerHwnd = 1;
+  pet.animationKey = "carried_hold";
+  pet.localX = 400;
+  pet.localY = 300;
+  const before = pet.toDrawState(pet.viewScale, 1, 1).y;
+  pet.carryInputStaleMs = 500;
+  update(pet, surfaces, viewport, 1, 1, 0, null);
+  assert.equal(pet.motionPhase, "falling");
+  assert.equal(pet.fallFromCarry, false);
+  const after = pet.toDrawState(pet.viewScale, 1, 1).y;
+  assert.ok(Math.abs(after - before) < 2, `draw Y jumped ${before} -> ${after}`);
+});
+
+test("HWND change during carry drop uses normal fall playback", () => {
+  const pet = makePet();
+  const viewport = { w: 800, h: 600 };
+  update(pet, [surface("floor", 0, 800, 595)], viewport);
+  pet.motionPhase = "falling";
+  pet.fallPhase = "airborne";
+  pet.fallFromCarry = true;
+  pet.animationKey = "carried_release";
+  pet.frameIndex = 2;
+  pet.lastGeometryHwnd = 1;
+  const meta = liveMeta(2, 2);
+  pet.update(16, [surface("floor", 0, 800, 595)], 1, 1, viewport, null, 2, meta);
+  assert.equal(pet.fallFromCarry, false);
+  assert.equal(pet.animationKey, "fall");
+});
+
+test("carry drag swing follows horizontal motion and resets on release", () => {
+  const pet = makePet();
+  const viewport = { w: 800, h: 600 };
+  const surfaces = [surface("floor", 0, 800, 595)];
+  update(pet, surfaces, viewport);
+  pet.localX = 400;
+  pet.localY = 595;
+  pet.motionPhase = "carried";
+  pet.carrySubPhase = "held";
+  pet.carryFacingLocked = false;
+  pet.animationKey = "carried_hold";
+  pet.activityId = "user_carry";
+  pet.carrySwingDeg = 0;
+  pet.carryPrevGripLocalX = 400;
+  const ptr = (x, down = true) => ({
+    x,
+    y: 580,
+    primaryButtonDown: down,
+    targetHwnd: 1,
+    observedAtMs: Date.now(),
+  });
+  update(pet, surfaces, viewport, 1, 1, 50, ptr(460));
+  const dragged = pet.toDrawState(pet.viewScale, 1, 1);
+  assert.ok(Math.abs(dragged.swingDeg) > 0.5);
+  update(pet, surfaces, viewport, 1, 1, 16, ptr(460, false));
+  const released = pet.toDrawState(pet.viewScale, 1, 1);
+  assert.equal(released.swingDeg, 0);
+});
+
+test("carried hold ping-pongs authoring cells 7-11 (manifest indices 6-10)", () => {
+  const holdFrames = manifest.habitat.animations.carried_hold.frames;
+  assert.deepEqual(holdFrames, [6, 7, 8, 9, 10, 9, 8]);
+  const pet = makePet();
+  const viewport = { w: 800, h: 600 };
+  const surfaces = [surface("floor", 0, 800, 595)];
+  pet.motionPhase = "carried";
+  pet.carrySubPhase = "held";
+  pet.animationKey = "carried_hold";
+  pet.frameIndex = holdFrames.indexOf(10);
+  const ptr = () => ({
+    x: 400,
+    y: 580,
+    primaryButtonDown: true,
+    targetHwnd: 1,
+    observedAtMs: Date.now(),
+  });
+  const cells = [holdFrames[pet.frameIndex]];
+  const frameMs = 1000 / 12;
+  for (let i = 0; i < 7; i += 1) {
+    update(pet, surfaces, viewport, 1, 1, frameMs + 1, ptr());
+    cells.push(holdFrames[pet.frameIndex]);
+  }
+  assert.deepEqual(cells, [10, 9, 8, 6, 7, 8, 9, 10]);
+});
+
+test("carry grip anchor uses cursor IDE-local position", () => {
+  const pet = makePet();
+  const viewport = { w: 800, h: 600 };
+  update(pet, [surface("floor", 0, 800, 595)], viewport);
+  pet.motionPhase = "carried";
+  pet.carrySubPhase = "held";
+  pet.carryFacingLocked = false;
+  pet.animationKey = "carried_hold";
+  const ptr = {
+    x: 412,
+    y: 288,
+    primaryButtonDown: true,
+    targetHwnd: 1,
+    observedAtMs: Date.now(),
+  };
+  update(pet, [surface("floor", 0, 800, 595)], viewport, 1, 1, 16, ptr);
+  assert.equal(pet.localX, 412);
+  assert.equal(pet.localY, 288);
+});
+
+test("carry drop lands on the first ledge crossed below the foot", () => {
+  const pet = makePet();
+  const viewport = { w: 800, h: 600 };
+  const upper = surface("upper", 0, 800, 400);
+  const lower = surface("lower", 0, 800, 595);
+  update(pet, [upper, lower], viewport);
+  pet.localX = 400;
+  pet.localY = 395;
+  pet.motionPhase = "carried";
+  pet.carrySubPhase = "held";
+  pet.carryFacingLocked = false;
+  pet.animationKey = "carried_hold";
+  pet.activityId = "user_carry";
+  pet.beginCarryDrop();
+  assert.equal(pet.fallFromCarry, true);
+  const landed = fallUntilLand(pet, [upper, lower], viewport, 16);
+  assert.equal(landed, "lower");
 });

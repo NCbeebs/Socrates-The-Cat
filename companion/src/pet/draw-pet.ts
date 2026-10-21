@@ -8,6 +8,25 @@ function snapPx(n: number): number {
   return Math.round(n);
 }
 
+/** Carry drag swing + horizontal mirror (`PetDrawState.swingDeg` / `flipX`). */
+function layerTransform(
+  state: PetDrawState,
+  drawX: number,
+  clipWDisplay: number,
+): string | null {
+  const parts: string[] = [];
+  if (Math.abs(state.swingDeg) > 0.01) {
+    parts.push(
+      `rotate(${state.swingDeg.toFixed(2)}, ${snapPx(state.swingPivotX)}, ${snapPx(state.swingPivotY)})`,
+    );
+  }
+  if (state.flipX) {
+    const cx = drawX + clipWDisplay / 2;
+    parts.push(`scale(-1,1) translate(${-2 * cx},0)`);
+  }
+  return parts.length ? parts.join(" ") : null;
+}
+
 /** Prepare retained SVG images so frame updates never replace a loaded sprite. */
 export async function createPetRenderer(
   svg: SVGSVGElement,
@@ -78,9 +97,9 @@ export async function createPetRenderer(
     rect.setAttribute("width", String(Math.max(1, Math.floor(clipWDisplay) - 1)));
     rect.setAttribute("height", String(Math.max(1, Math.floor(clipHDisplay) - 1)));
 
-    if (state.flipX) {
-      const cx = drawX + clipWDisplay / 2;
-      layer.setAttribute("transform", `scale(-1,1) translate(${-2 * cx},0)`);
+    const transform = layerTransform(state, drawX, clipWDisplay);
+    if (transform) {
+      layer.setAttribute("transform", transform);
     } else {
       layer.removeAttribute("transform");
     }

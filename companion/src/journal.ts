@@ -20,7 +20,13 @@ export class ActivityJournal {
     const { activityId: activity, animationKey: animation, motionPhase: motion } = state;
     let key = activity;
     let phrases: string[] | undefined;
-    if (motion === "falling") {
+    if (motion === "carried" || activity === "user_carry") {
+      key = "carried";
+      phrases = [
+        "Relocating by popular demand.",
+        "A change of scenery, courtesy of the pointer.",
+      ];
+    } else if (motion === "falling") {
       key = "falling";
       phrases = ["Taking the scenic route down.", "An unexpected change of altitude."];
     } else if (motion === "cling" || activity === "ride_grip") {

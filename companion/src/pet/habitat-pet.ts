@@ -8,26 +8,20 @@ import type {
   GeometryMeta,
   HabitatBlock,
   IdeLocalPointer,
+  IdeLocalPointerCoords,
   PetManifest,
   SitLookDef,
   SurfaceSeg,
 } from "./types";
 import { SashMatcher, type TrackedSash } from "./sash-matcher";
-import { emitPositionJumpProbe } from "./position-jump-probe";
-
-/** REMOVE BEFORE NEXT PR: inter-frame foot delta that triggers `position_jump_probe` (non-fall). */
-const POSITION_JUMP_PROBE_PX = 40;
-/** REMOVE BEFORE NEXT PR: same probe while `motionPhase === "falling"`. */
-const POSITION_JUMP_PROBE_FALLING_PX = 200;
-/** REMOVE BEFORE NEXT PR: `toDrawState` safe-box correction worth logging. */
-const POSITION_CLAMP_PROBE_PX = 2;
 
 export type PetMotionPhase =
   | "grounded"
   | "falling"
   | "await_geometry"
   | "cling"
-  | "slide";
+  | "slide"
+  | "carried";
 
 type SleepPhase =
   | "awake"
@@ -94,6 +88,14 @@ export interface PetDrawState {
   flipX: boolean;
   motionPhase: PetMotionPhase;
   supportId: string | null;
+  /**
+   * Cosmetic carry drag rotation (degrees) around `swingPivot*`; cleared on release.
+   * Wired in `draw-pet.ts`; driven from cursor grip velocity in `HabitatPet.tickCarrySwing`.
+   */
+  swingDeg: number;
+  /** Overlay px hand pivot (`localX`/`localY` grip anchor). */
+  swingPivotX: number;
+  swingPivotY: number;
   /** Overlay-local px for `npm run tauri:dev:debug` pointer alignment checks. */
   pointerDebug: PetPointerDebug | null;
 }
@@ -171,6 +173,20 @@ const POINTER_FACING_DEADBAND_PX = 10;
 /** Extra reach in front of the cat (IDE-local px) along the current facing side. */
 const POINTER_PAW_REACH_PX = 40;
 const POINTER_REACH_PAD_PX = 12;
+/** Click-and-hold in the pointer reach box to pick up and drag (`Socs-carried.png`). */
+const CARRY_ACTIVITY_ID = "user_carry";
+const CARRIED_PICKUP_ANIM = "carried_pickup";
+const CARRIED_HOLD_ANIM = "carried_hold";
+const CARRIED_RELEASE_ANIM = "carried_release";
+export const CARRY_HOLD_MS = 250;
+/** Drop carry after this long without a fresh validated input sample (not a button release). */
+const CARRY_INPUT_LOSS_MS = 500;
+/** `carried_release` cells played only after ledge contact (index 0 while airborne). */
+const CARRY_RELEASE_LAND_FRAME_INDEX = 1;
+/** Carry drag: horizontal cursor speed (IDE-local px/s) → swing target angle. */
+const CARRY_SWING_VEL_TO_DEG = 0.055;
+const CARRY_SWING_MAX_DEG = 11;
+const CARRY_SWING_SMOOTH_PER_SEC = 11;
 
 /** Sheet cells for `Socs-swipe-right.png` pointer swipe (`pet.json` `swipe`). */
 const SWIPE_INTRO_CELLS = [3, 4, 5] as const;
@@ -471,6 +487,93 @@ function pointInReachBox(x: number, y: number, reach: ReachBox): boolean {
   return x >= reach.x0 && x <= reach.x1 && y >= reach.y0 && y <= reach.y1;
 }
 
+/** IDE-local cursor position when inside the tracked window (`get_pointer_in_ide_local`). */
+function idePointerCoords(
+  pointer: IdeLocalPointer | null,
+): { x: number; y: number } | null {
+  if (!pointer || pointer.x == null || pointer.y == null) {
+    return null;
+  }
+  return { x: pointer.x, y: pointer.y };
+}
+
+export type CarryInputPhase = "disarmed" | "armed" | "hold_pending";
+
+/** Observed-press carry gesture; exported for regression tests. */
+export function stepCarryInputTransition(
+  phase: CarryInputPhase,
+  holdStartedAtMs: number | null,
+  primaryButtonDown: boolean,
+  inReach: boolean,
+  nowMs: number,
+  carryActive: boolean,
+): {
+  phase: CarryInputPhase;
+  holdStartedAtMs: number | null;
+  beginCarry: boolean;
+  endCarry: boolean;
+} {
+  let nextPhase = phase;
+  let nextHold = holdStartedAtMs;
+  let beginCarry = false;
+  let endCarry = false;
+
+  if (carryActive) {
+    if (!primaryButtonDown) {
+      endCarry = true;
+    }
+    return {
+      phase: nextPhase,
+      holdStartedAtMs: nextHold,
+      beginCarry,
+      endCarry,
+    };
+  }
+
+  if (phase === "disarmed") {
+    if (!primaryButtonDown) {
+      nextPhase = "armed";
+    }
+    return { phase: nextPhase, holdStartedAtMs: null, beginCarry, endCarry };
+  }
+
+  if (phase === "armed") {
+    if (!primaryButtonDown) {
+      return { phase: nextPhase, holdStartedAtMs: null, beginCarry, endCarry };
+    }
+    if (inReach) {
+      nextPhase = "hold_pending";
+      nextHold = nowMs;
+    } else {
+      nextPhase = "disarmed";
+    }
+    return { phase: nextPhase, holdStartedAtMs: nextHold, beginCarry, endCarry };
+  }
+
+  if (!primaryButtonDown) {
+    nextPhase = "disarmed";
+    nextHold = null;
+    return { phase: nextPhase, holdStartedAtMs: nextHold, beginCarry, endCarry };
+  }
+
+  if (!inReach) {
+    nextPhase = "disarmed";
+    nextHold = null;
+    return { phase: nextPhase, holdStartedAtMs: nextHold, beginCarry, endCarry };
+  }
+
+  if (
+    nextHold != null &&
+    nowMs - nextHold >= CARRY_HOLD_MS
+  ) {
+    beginCarry = true;
+    nextPhase = "armed";
+    nextHold = null;
+  }
+
+  return { phase: nextPhase, holdStartedAtMs: nextHold, beginCarry, endCarry };
+}
+
 /** Earliest edge crossed when leaving the reach box along segment a→b. */
 function classifyReachExit(
   ax: number,
@@ -582,13 +685,17 @@ export class HabitatPet {
   private lastSurfaceRevision = 0;
   /** Last `GeometryMeta.targetHwnd`; HWND swaps use new window-local ledges — do not re-sync by surface id. */
   private lastGeometryHwnd = 0;
-  // REMOVE BEFORE NEXT PR: foot sample + geometry context for `position-jump-probe.ts`.
-  private diagProbeFootPrevX = Number.NaN;
-  private diagProbeFootPrevY = Number.NaN;
-  private diagProbeRevision = 0;
-  private diagProbeHwnd = 0;
-  private diagProbeLedges = 0;
-  private diagProbeSurfaceSource = "file";
+  private carryInputPhase: CarryInputPhase = "disarmed";
+  private carryHoldStartedAtMs: number | null = null;
+  private carrySubPhase: "pickup" | "held" | null = null;
+  /** Locked `facingLeft` for mirror during carry/release fall. */
+  private carryFacingLocked: boolean | null = null;
+  private carryOwnerHwnd = 0;
+  /** Drop uses `carried_release` + crossing-only ledge resolve (no status-bar snap). */
+  private fallFromCarry = false;
+  /** Cosmetic pendulum while `carrySubPhase === "held"`; reset in `resetCarrySwing`. */
+  private carrySwingDeg = 0;
+  private carryPrevGripLocalX: number | null = null;
   /** IDE-local px traveled while walking; drives walk frame phase when `stridePixelsPerLoop` is set. */
   private walkOdometer = 0;
   /** Previous finalized sample for swept reach; `targetHwnd` must match for segment tests. */
@@ -600,7 +707,8 @@ export class HabitatPet {
   private pointerDebugEnabled = false;
   private pointerRejectReason: string | null = null;
   /** Set each `update` after validation; used for debug overlay + segment crossing. */
-  private frameValidatedPointer: IdeLocalPointer | null = null;
+  private frameValidatedPointer: IdeLocalPointerCoords | null = null;
+  private carryInputStaleMs = 0;
   private swipePlayback: ActiveSwipePlayback | null = null;
   private pouncePlayback: ActivePouncePlayback | null = null;
   /** Last confirmed in-reach sample for lateral exit classification (§8.5.1). */
@@ -738,10 +846,6 @@ export class HabitatPet {
     if (meta.targetHwnd !== 0) {
       this.lastGeometryHwnd = meta.targetHwnd;
     }
-    this.diagProbeRevision = surfaceRevision;
-    this.diagProbeHwnd = meta.targetHwnd;
-    this.diagProbeLedges = ledges.length;
-    this.diagProbeSurfaceSource = meta.surfaceSource ?? "file";
     const sashTracks = this.sashMatcher.ingest(
       this.collectHorizontalSashes(surfaces),
       {
@@ -757,6 +861,15 @@ export class HabitatPet {
     }
 
     this.tickActivityCooldowns(dtMs);
+
+    this.tickCarryInput(pointerSample, meta, dtMs);
+    if (this.motionPhase === "carried") {
+      this.noteSurfaceRevision(surfaceRevision, ledges, sashTracks, sy, scale);
+      this.frameValidatedPointer = this.validatePointerSample(pointerSample, meta);
+      this.tickCarried(dtMs, this.validateCarryInputSample(pointerSample, meta), sx, sy, scale);
+      this.tickPointerReachBookkeeping(this.frameValidatedPointer);
+      return this.toDrawState(scale, sx, sy);
+    }
 
     const inCling = this.motionPhase === "cling";
 
@@ -1182,11 +1295,8 @@ export class HabitatPet {
     // Enforce the same boundary for falls, sash rides, portal exits, and pivot changes.
     // Move the physics anchor too so pointer reactions follow the visible cat.
     const safe = this.safeFootBounds(pivot);
-    const preClampX = this.localX;
-    const preClampY = this.localY;
     this.localX = Math.max(safe.x0, Math.min(safe.x1, this.localX));
     this.localY = Math.max(safe.y0, Math.min(safe.y1, this.localY));
-    this.probePositionAfterFootMove(preClampX, preClampY, safe, sx, sy);
     const drawX = this.localX * sx - pivot[0] * scale;
     const drawY = this.localY * sy - pivot[1] * scale;
     const { url, size } = this.resolveClip(drawKey);
@@ -1211,6 +1321,12 @@ export class HabitatPet {
       flipX: this.clipMirroredForDraw(drawKey),
       motionPhase: this.motionPhase,
       supportId: this.supportIdLabel(),
+      swingDeg:
+        this.motionPhase === "carried" && this.carrySubPhase === "held"
+          ? this.carrySwingDeg
+          : 0,
+      swingPivotX: this.localX * sx,
+      swingPivotY: this.localY * sy,
       pointerDebug: this.buildPointerDebug(sx, sy, this.frameValidatedPointer),
     };
   }
@@ -1218,7 +1334,7 @@ export class HabitatPet {
   private buildPointerDebug(
     sx: number,
     sy: number,
-    pointer: IdeLocalPointer | null,
+    pointer: IdeLocalPointerCoords | null,
   ): PetPointerDebug | null {
     if (!this.pointerDebugEnabled) {
       return null;
@@ -1291,6 +1407,9 @@ export class HabitatPet {
     if (this.habitat.animations[animationKey]?.noFlip) {
       return false;
     }
+    if (this.carryFacingLocked !== null) {
+      return this.carryFacingLocked;
+    }
     return this.facingLeft;
   }
 
@@ -1360,14 +1479,21 @@ export class HabitatPet {
    * are stable but Y/X are window-local; `syncAttachmentFromLedgeT` must not run across HWNDs.
    */
   private onTrackedIdeWindowChanged(): void {
+    this.carryInputPhase = "disarmed";
+    this.carryHoldStartedAtMs = null;
     this.fallIgnoreLedgeId = null;
     this.awaitGeometryMs = 0;
+    if (this.motionPhase === "carried") {
+      this.abortCarryInterrupted();
+      return;
+    }
     if (this.motionPhase === "cling") {
       this.clingSubPhase = null;
     }
     if (this.motionPhase !== "falling") {
       this.beginFall();
     } else {
+      this.clearCarryDropPlaybackState();
       this.attachment = null;
       this.fallPhase = "airborne";
       this.frameIndex = this.fallAirHoldFrameIndex();
@@ -1519,7 +1645,8 @@ export class HabitatPet {
     if (
       this.motionPhase === "cling" ||
       this.motionPhase === "falling" ||
-      this.motionPhase === "slide"
+      this.motionPhase === "slide" ||
+      this.motionPhase === "carried"
     ) {
       return false;
     }
@@ -2327,72 +2454,7 @@ export class HabitatPet {
     const sorted = [...ledges].sort((a, b) => this.scoreLedge(b) - this.scoreLedge(a));
     const pick = sorted[0];
     if (!pick) return;
-    const fromX = this.localX;
-    const fromY = this.localY;
     this.attachTo(pick, 0.5);
-    emitPositionJumpProbe(
-      "spawn_on_best_ledge",
-      `${this.formatPositionJumpProbeContext()} from=${fromX.toFixed(1)},${fromY.toFixed(1)} to=${this.localX.toFixed(1)},${this.localY.toFixed(1)} ledge=${pick.id}`,
-    );
-  }
-
-  /** REMOVE BEFORE NEXT PR: logs clamp + large per-frame foot deltas into runtime log via `position-jump-probe.ts`. */
-  private probePositionAfterFootMove(
-    preClampX: number,
-    preClampY: number,
-    safe: ReachBox,
-    sx: number,
-    sy: number,
-  ): void {
-    const postX = this.localX;
-    const postY = this.localY;
-    const clampDx = postX - preClampX;
-    const clampDy = postY - preClampY;
-    const clampMag = Math.hypot(clampDx, clampDy);
-    if (clampMag >= POSITION_CLAMP_PROBE_PX) {
-      emitPositionJumpProbe(
-        "safe_bounds_clamp",
-        `${this.formatPositionJumpProbeContext(sx, sy)} clampΔ=${clampDx.toFixed(1)},${clampDy.toFixed(1)} foot=${postX.toFixed(1)},${postY.toFixed(1)} safe=${safe.x0.toFixed(0)},${safe.y0.toFixed(0)}-${safe.x1.toFixed(0)},${safe.y1.toFixed(0)} viewport=${this.viewport.w}x${this.viewport.h}`,
-      );
-    }
-    const prevX = this.diagProbeFootPrevX;
-    const prevY = this.diagProbeFootPrevY;
-    if (!Number.isFinite(prevX) || !Number.isFinite(prevY)) {
-      this.diagProbeFootPrevX = postX;
-      this.diagProbeFootPrevY = postY;
-      return;
-    }
-    const frameDx = postX - prevX;
-    const frameDy = postY - prevY;
-    const frameMag = Math.hypot(frameDx, frameDy);
-    const fallThreshold =
-      this.motionPhase === "falling"
-        ? POSITION_JUMP_PROBE_FALLING_PX
-        : POSITION_JUMP_PROBE_PX;
-    if (frameMag >= fallThreshold) {
-      emitPositionJumpProbe(
-        this.motionPhase === "falling" ? "frame_delta_falling" : "frame_delta",
-        `${this.formatPositionJumpProbeContext(sx, sy)} Δ=${frameDx.toFixed(1)},${frameDy.toFixed(1)} |${frameMag.toFixed(1)}| foot=${postX.toFixed(1)},${postY.toFixed(1)} prev=${prevX.toFixed(1)},${prevY.toFixed(1)}`,
-      );
-    }
-    this.diagProbeFootPrevX = postX;
-    this.diagProbeFootPrevY = postY;
-  }
-
-  private formatPositionJumpProbeContext(sx = this.viewSx, sy = this.viewSy): string {
-    const att = this.attachment;
-    const attLabel =
-      att?.kind === "ledge"
-        ? `ledge:${att.surfaceId}`
-        : att?.kind === "sash"
-          ? `sash:${att.trackKey}`
-          : "-";
-    return (
-      `motion=${this.motionPhase} fall=${this.fallPhase ?? "null"} att=${attLabel} ` +
-      `anim=${this.animationKey} awaitMs=${this.awaitGeometryMs} rev=${this.diagProbeRevision} ` +
-      `hwnd=0x${this.diagProbeHwnd.toString(16)} ledges=${this.diagProbeLedges} src=${this.diagProbeSurfaceSource} ` +
-      `sx=${sx.toFixed(3)} sy=${sy.toFixed(3)} scale=${this.viewScale.toFixed(3)}`
-    );
   }
 
   private attachTo(ledge: Ledge, t: number) {
@@ -2610,6 +2672,10 @@ export class HabitatPet {
   }
 
   private beginFall(clearDepartingLedgeIgnore = true, skipDividerSlideClear = false) {
+    if (this.motionPhase === "carried") {
+      this.beginCarryDrop();
+      return;
+    }
     if (clearDepartingLedgeIgnore) {
       this.fallIgnoreLedgeId = null;
     }
@@ -2663,6 +2729,10 @@ export class HabitatPet {
     if (this.fallPhase === null) {
       return;
     }
+    if (this.fallFromCarry) {
+      this.tickCarryReleaseFallAnimation(dtMs);
+      return;
+    }
     const anim = this.habitat.animations[FALL_ANIM];
     if (!anim?.frames.length) {
       return;
@@ -2691,9 +2761,15 @@ export class HabitatPet {
   }
 
   private completeFallLanding() {
+    const fromCarry = this.fallFromCarry;
     this.fallPhase = null;
     this.fallIgnoreLedgeId = null;
+    this.fallFromCarry = false;
+    this.carryFacingLocked = null;
     this.motionPhase = "grounded";
+    if (fromCarry) {
+      this.pointerComboRearm = true;
+    }
     this.startIdle();
   }
 
@@ -2702,7 +2778,18 @@ export class HabitatPet {
     this.attachToLedgePreserveFoot(ledge);
     this.syncedSupportLedgeY = ledge.y;
     this.fallPhase = "land";
-    this.frameIndex = this.fallLandStartFrameIndex();
+    if (this.fallFromCarry) {
+      const release = this.habitat.animations[CARRIED_RELEASE_ANIM];
+      const landStart = Math.min(
+        CARRY_RELEASE_LAND_FRAME_INDEX,
+        (release?.frames.length ?? 1) - 1,
+      );
+      this.frameIndex = Math.max(this.frameIndex, landStart);
+      this.animationKey = CARRIED_RELEASE_ANIM;
+    } else {
+      this.frameIndex = this.fallLandStartFrameIndex();
+      this.animationKey = FALL_ANIM;
+    }
     this.frameAccumulator = 0;
     this.vyLocal = 0;
   }
@@ -2714,7 +2801,13 @@ export class HabitatPet {
       }
       this.attachment = null;
       this.fallPhase = "airborne";
+      if (this.fallFromCarry) {
+        this.frameIndex = 0;
+        this.animationKey = CARRIED_RELEASE_ANIM;
+        return;
+      }
       this.frameIndex = this.fallAirHoldFrameIndex();
+      this.animationKey = FALL_ANIM;
     }
 
     this.fallPrevY = this.localY;
@@ -2723,23 +2816,37 @@ export class HabitatPet {
 
     const land =
       this.findLandingLedgeCrossing(ledges, this.localX, this.fallPrevY, this.localY) ??
-      this.lowestLedgeAtWindowBottom(ledges);
+      (this.fallFromCarry
+        ? this.highestWalkableLedgeUnderFoot(
+            ledges,
+            CARRIED_RELEASE_ANIM,
+            8,
+          )
+        : this.highestWalkableLedgeUnderFoot(ledges, FALL_ANIM, 0));
     if (land) {
       this.onFallLedgeContact(land);
     }
   }
 
   /**
-   * A fall that started below every ledge (e.g. HWND swap to a shorter window) is pinned at the
-   * `toDrawState` bottom clamp and can never cross one; land on the lowest UIA ledge under the
-   * foot instead (normally `platform-statusbar-top` from `surface_mapper.rs`).
+   * Pin to the highest walkable ledge under `localX` when the foot is at the window bottom
+   * (`bottomInsetPx` lets carry drops engage slightly before the hard clamp).
    */
-  private lowestLedgeAtWindowBottom(ledges: Ledge[]): Ledge | null {
-    if (this.localY < this.safeFootBounds(this.pivotForDraw(FALL_ANIM)).y1) {
+  private highestWalkableLedgeUnderFoot(
+    ledges: Ledge[],
+    pivotAnim: string,
+    bottomInsetPx: number,
+  ): Ledge | null {
+    const safe = this.safeFootBounds(this.pivotForDraw(pivotAnim));
+    if (this.localY < safe.y1 - bottomInsetPx) {
       return null;
     }
     const margin = this.footMarginLocal();
-    const under = ledges.filter((l) => this.localX >= l.x0 - margin && this.localX <= l.x1 + margin);
+    const under = ledges.filter(
+      (l) =>
+        this.localX >= l.x0 - margin &&
+        this.localX <= l.x1 + margin,
+    );
     return under.sort((a, b) => b.y - a.y)[0] ?? null;
   }
 
@@ -2769,12 +2876,318 @@ export class HabitatPet {
     return candidates[0] ?? null;
   }
 
-  private validatePointerSample(
+  private validateCarryInputSample(
     pointer: IdeLocalPointer | null,
     meta: GeometryMeta,
   ): IdeLocalPointer | null {
     if (!pointer) {
+      return null;
+    }
+    const age = Date.now() - pointer.observedAtMs;
+    if (age > POINTER_SAMPLE_MAX_AGE_MS) {
+      return null;
+    }
+    if (meta.targetHwnd === 0) {
+      return null;
+    }
+    if (
+      pointer.targetHwnd !== 0 &&
+      meta.targetHwnd !== pointer.targetHwnd
+    ) {
+      return null;
+    }
+    return pointer;
+  }
+
+  private tickCarryInput(
+    sample: IdeLocalPointer | null,
+    meta: GeometryMeta,
+    dtMs: number,
+  ): void {
+    const input = this.validateCarryInputSample(sample, meta);
+    if (!input) {
+      if (this.motionPhase === "carried") {
+        this.carryInputStaleMs += dtMs;
+        if (this.carryInputStaleMs >= CARRY_INPUT_LOSS_MS) {
+          this.abortCarryInterrupted();
+        }
+      } else if (this.carryInputPhase === "hold_pending") {
+        this.carryInputPhase = "disarmed";
+        this.carryHoldStartedAtMs = null;
+      }
+      return;
+    }
+    this.carryInputStaleMs = 0;
+
+    if (
+      this.motionPhase === "carried" &&
+      this.carryOwnerHwnd !== 0 &&
+      input.targetHwnd !== this.carryOwnerHwnd
+    ) {
+      this.abortCarryInterrupted();
+      return;
+    }
+
+    const coords = idePointerCoords(input);
+    const inReach =
+      coords != null &&
+      this.pointInReach(coords.x, coords.y, this.pointerReachBoxLocal());
+    const carryActive = this.motionPhase === "carried";
+    const transition = stepCarryInputTransition(
+      this.carryInputPhase,
+      this.carryHoldStartedAtMs,
+      input.primaryButtonDown,
+      inReach,
+      input.observedAtMs,
+      carryActive,
+    );
+    this.carryInputPhase = transition.phase;
+    this.carryHoldStartedAtMs = transition.holdStartedAtMs;
+    if (transition.endCarry) {
+      this.beginCarryDrop();
+      return;
+    }
+    if (transition.beginCarry && this.motionPhase !== "carried") {
+      this.beginCarry(meta);
+    }
+  }
+
+  private clearCarryDropPlaybackState(): void {
+    this.fallFromCarry = false;
+    this.carrySubPhase = null;
+    this.carryFacingLocked = null;
+    this.carryOwnerHwnd = 0;
+    this.resetCarrySwing();
+  }
+
+  /** Clears drag swing so release/fall draw is upright (`draw-pet.ts` reads `swingDeg`). */
+  private resetCarrySwing(): void {
+    this.carrySwingDeg = 0;
+    this.carryPrevGripLocalX = null;
+  }
+
+  /** Input loss / HWND cancel — not a deliberate user drop. */
+  private abortCarryInterrupted(): void {
+    this.carryInputPhase = "disarmed";
+    this.carryHoldStartedAtMs = null;
+    this.carryInputStaleMs = 0;
+    if (this.motionPhase !== "carried") {
+      return;
+    }
+    const sx = this.viewSx;
+    const sy = this.viewSy;
+    const scale = this.viewScale;
+    if (this.carrySubPhase === "held") {
+      this.shiftAnchorPivot(CARRIED_HOLD_ANIM, FALL_ANIM, sx, sy, scale);
+    }
+    this.clearCarryDropPlaybackState();
+    this.motionPhase = "grounded";
+    this.beginFall(false, true);
+  }
+
+  private beginCarry(meta: GeometryMeta): void {
+    this.cancelPointerReactionPlayback();
+    this.clearAnnoyedPlayback();
+    if (this.sleepPhase !== "awake") {
+      this.clearSleepSequence();
+    }
+    this.finishPortal();
+    this.cancelTurn();
+    this.clearDividerSlideState(true);
+    this.clearSegmentedPlay();
+    this.clearSitLookState();
+
+    this.carryFacingLocked = this.facingLeft;
+    this.carryOwnerHwnd = meta.targetHwnd;
+    this.pointerComboRearm = true;
+    this.motionPhase = "carried";
+    this.carrySubPhase = "pickup";
+    this.activityId = CARRY_ACTIVITY_ID;
+    this.animationKey = CARRIED_PICKUP_ANIM;
+    this.frameIndex = 0;
+    this.frameAccumulator = 0;
+    this.attachment = null;
+    this.awaitGeometryMs = 0;
+    this.syncedSupportLedgeY = null;
+    this.resetCarrySwing();
+  }
+
+  private tickCarried(
+    dtMs: number,
+    input: IdeLocalPointer | null,
+    sx: number,
+    sy: number,
+    scale: number,
+  ): void {
+    if (this.carrySubPhase === "pickup") {
+      this.advanceCarriedPickup(dtMs, sx, sy, scale, input);
+    } else if (this.carrySubPhase === "held") {
+      this.syncCarryGripToPointer(input);
+      this.tickCarrySwing(dtMs, input);
+      this.advanceHostAnimationFrames(dtMs);
+    }
+  }
+
+  /** Pendulum tilt from horizontal drag speed; pivot is the grip (`localX`/`localY`). */
+  private tickCarrySwing(dtMs: number, input: IdeLocalPointer | null): void {
+    const coords = idePointerCoords(input);
+    if (!coords || dtMs <= 0) {
+      return;
+    }
+    const x = coords.x;
+    if (this.carryPrevGripLocalX !== null) {
+      const vx = ((x - this.carryPrevGripLocalX) / dtMs) * 1000;
+      const mirror = this.carryFacingLocked ?? this.facingLeft;
+      const signedVx = mirror ? -vx : vx;
+      const targetDeg = Math.max(
+        -CARRY_SWING_MAX_DEG,
+        Math.min(CARRY_SWING_MAX_DEG, signedVx * CARRY_SWING_VEL_TO_DEG),
+      );
+      const alpha = 1 - Math.exp((-CARRY_SWING_SMOOTH_PER_SEC * dtMs) / 1000);
+      this.carrySwingDeg += (targetDeg - this.carrySwingDeg) * alpha;
+    }
+    this.carryPrevGripLocalX = x;
+  }
+
+  private advanceCarriedPickup(
+    dtMs: number,
+    sx: number,
+    sy: number,
+    scale: number,
+    input: IdeLocalPointer | null,
+  ): void {
+    const anim = this.habitat.animations[CARRIED_PICKUP_ANIM];
+    if (!anim?.frames.length) {
+      this.enterCarriedHeld(sx, sy, scale, input);
+      return;
+    }
+    this.frameAccumulator += dtMs;
+    const frameDuration = 1000 / (anim.fps || 12);
+    while (this.frameAccumulator >= frameDuration) {
+      this.frameAccumulator -= frameDuration;
+      if (this.frameIndex + 1 < anim.frames.length) {
+        this.frameIndex += 1;
+      } else {
+        this.enterCarriedHeld(sx, sy, scale, input);
+        break;
+      }
+    }
+  }
+
+  private enterCarriedHeld(
+    sx: number,
+    sy: number,
+    scale: number,
+    input: IdeLocalPointer | null,
+  ): void {
+    if (this.carrySubPhase === "held") {
+      return;
+    }
+    this.shiftAnchorPivot(
+      CARRIED_PICKUP_ANIM,
+      CARRIED_HOLD_ANIM,
+      sx,
+      sy,
+      scale,
+    );
+    this.carrySubPhase = "held";
+    this.animationKey = CARRIED_HOLD_ANIM;
+    const holdAnim = this.habitat.animations[CARRIED_HOLD_ANIM];
+    const pickupFrames =
+      this.habitat.animations[CARRIED_PICKUP_ANIM]?.frames ?? [];
+    const pickupEndCell = pickupFrames[pickupFrames.length - 1];
+    const holdFrames = holdAnim?.frames ?? [];
+    let holdStart =
+      pickupEndCell !== undefined
+        ? holdFrames.indexOf(pickupEndCell)
+        : -1;
+    // Pickup may end on sheet cell 11 (authoring label 12); hold wiggle peaks at 10 (label 11).
+    if (holdStart < 0 && holdFrames.length > 0) {
+      const peakCell = Math.max(...holdFrames);
+      holdStart = holdFrames.indexOf(peakCell);
+    }
+    this.frameIndex = holdStart >= 0 ? holdStart : 0;
+    this.frameAccumulator = 0;
+    this.resetCarrySwing();
+    this.syncCarryGripToPointer(input);
+  }
+
+  /** Grip pivot anchor tracks the cursor in IDE-local space (`pivotForDraw` subtracts cell offset). */
+  private syncCarryGripToPointer(input: IdeLocalPointer | null): void {
+    const coords = idePointerCoords(input);
+    if (!coords) {
+      return;
+    }
+    this.localX = coords.x;
+    this.localY = coords.y;
+  }
+
+  private beginCarryDrop(): void {
+    this.resetCarrySwing();
+    if (this.motionPhase === "carried") {
+      const fromAnim =
+        this.carrySubPhase === "held"
+          ? CARRIED_HOLD_ANIM
+          : CARRIED_PICKUP_ANIM;
+      this.shiftAnchorPivot(
+        fromAnim,
+        CARRIED_RELEASE_ANIM,
+        this.viewSx,
+        this.viewSy,
+        this.viewScale,
+      );
+    }
+    this.carrySubPhase = null;
+    this.motionPhase = "falling";
+    this.fallPhase = "airborne";
+    this.fallFromCarry = true;
+    this.attachment = null;
+    this.activityId = CARRY_ACTIVITY_ID;
+    this.animationKey = CARRIED_RELEASE_ANIM;
+    this.frameIndex = 0;
+    this.frameAccumulator = 0;
+    this.vyLocal = 0;
+    this.fallPrevY = this.localY;
+    this.fallIgnoreLedgeId = null;
+    this.carryInputPhase = "disarmed";
+    this.carryHoldStartedAtMs = null;
+  }
+
+  private tickCarryReleaseFallAnimation(dtMs: number): void {
+    const anim = this.habitat.animations[CARRIED_RELEASE_ANIM];
+    if (!anim?.frames.length || this.fallPhase === null) {
+      return;
+    }
+    this.frameAccumulator += dtMs;
+    const frameDuration = 1000 / (anim.fps || 12);
+    while (this.frameAccumulator >= frameDuration) {
+      this.frameAccumulator -= frameDuration;
+      if (this.fallPhase === "airborne") {
+        break;
+      }
+      if (this.fallPhase === "land") {
+        if (this.frameIndex + 1 < anim.frames.length) {
+          this.frameIndex += 1;
+          continue;
+        }
+        this.completeFallLanding();
+        break;
+      }
+      break;
+    }
+  }
+
+  private validatePointerSample(
+    pointer: IdeLocalPointer | null,
+    meta: GeometryMeta,
+  ): IdeLocalPointerCoords | null {
+    if (!pointer) {
       this.pointerRejectReason = "no_sample";
+      this.lastValidatedPointerPos = null;
+      return null;
+    }
+    if (pointer.x == null || pointer.y == null) {
+      this.pointerRejectReason = "outside_ide";
       this.lastValidatedPointerPos = null;
       return null;
     }
@@ -2804,17 +3217,23 @@ export class HabitatPet {
       this.cancelPointerReactionPlayback();
     }
     this.pointerRejectReason = null;
-    return pointer;
+    return {
+      x: pointer.x,
+      y: pointer.y,
+      primaryButtonDown: pointer.primaryButtonDown,
+      targetHwnd: pointer.targetHwnd,
+      observedAtMs: pointer.observedAtMs,
+    };
   }
 
   /** Rearm annoyed + commit crossing history; run every tick after reach evaluation. */
-  private tickPointerReachBookkeeping(pointer: IdeLocalPointer | null): void {
+  private tickPointerReachBookkeeping(pointer: IdeLocalPointerCoords | null): void {
     this.updatePointerAnnoyedRearm(pointer);
     this.updatePointerComboRearm(pointer);
     this.finalizePointerSample(pointer);
   }
 
-  private updatePointerComboRearm(pointer: IdeLocalPointer | null): void {
+  private updatePointerComboRearm(pointer: IdeLocalPointerCoords | null): void {
     if (!pointer) {
       return;
     }
@@ -2837,7 +3256,7 @@ export class HabitatPet {
     }
   }
 
-  private finalizePointerSample(pointer: IdeLocalPointer | null): void {
+  private finalizePointerSample(pointer: IdeLocalPointerCoords | null): void {
     if (pointer) {
       this.lastValidatedPointerPos = {
         x: pointer.x,
@@ -2847,11 +3266,11 @@ export class HabitatPet {
     }
   }
 
-  private pointerEngagesReach(pointer: IdeLocalPointer): boolean {
+  private pointerEngagesReach(pointer: IdeLocalPointerCoords): boolean {
     return this.pointerHitsReach(pointer, this.pointerReachBoxLocal());
   }
 
-  private updatePointerAnnoyedRearm(pointer: IdeLocalPointer | null): void {
+  private updatePointerAnnoyedRearm(pointer: IdeLocalPointerCoords | null): void {
     if (!pointer) {
       return;
     }
@@ -2925,7 +3344,7 @@ export class HabitatPet {
   }
 
   private pointerHitsReach(
-    pointer: IdeLocalPointer,
+    pointer: IdeLocalPointerCoords,
     reach: { x0: number; y0: number; x1: number; y1: number },
   ): boolean {
     if (this.pointInReach(pointer.x, pointer.y, reach)) {
@@ -2951,7 +3370,7 @@ export class HabitatPet {
     );
   }
 
-  private applyPointerFacing(pointer: IdeLocalPointer | null): void {
+  private applyPointerFacing(pointer: IdeLocalPointerCoords | null): void {
     if (!pointer || this.portalPhase !== "awake") {
       return;
     }
@@ -2982,7 +3401,7 @@ export class HabitatPet {
   }
 
   /** Paw-reach facing for walk/swipe clips (not used during `noFlip` sit gaze). */
-  private syncFacingFromPointer(pointer: IdeLocalPointer): void {
+  private syncFacingFromPointer(pointer: IdeLocalPointerCoords): void {
     const dx = pointer.x - this.localX;
     if (dx < -POINTER_FACING_DEADBAND_PX) {
       this.facingLeft = true;
@@ -2991,7 +3410,7 @@ export class HabitatPet {
     }
   }
 
-  private tryPointerSwipe(pointer: IdeLocalPointer | null, inTurn: boolean) {
+  private tryPointerSwipe(pointer: IdeLocalPointerCoords | null, inTurn: boolean) {
     if (!pointer) {
       return;
     }
@@ -3015,7 +3434,7 @@ export class HabitatPet {
     this.startPointerSwipe();
   }
 
-  private tryPointerAnnoyed(pointer: IdeLocalPointer | null): void {
+  private tryPointerAnnoyed(pointer: IdeLocalPointerCoords | null): void {
     if (!pointer || this.annoyedPlayback || !this.annoyedReachRearm) {
       return;
     }
@@ -3096,7 +3515,7 @@ export class HabitatPet {
     }
   }
 
-  private syncSwipeCursorInReach(pointer: IdeLocalPointer | null): void {
+  private syncSwipeCursorInReach(pointer: IdeLocalPointerCoords | null): void {
     if (!this.swipePlayback || this.activityId !== POINTER_SWIPE_ACTIVITY) {
       return;
     }
@@ -3115,7 +3534,7 @@ export class HabitatPet {
     }
   }
 
-  private updatePointerMotionSpeed(pointer: IdeLocalPointer | null): void {
+  private updatePointerMotionSpeed(pointer: IdeLocalPointerCoords | null): void {
     if (!pointer) {
       this.pointerSpeedPxPerSec *= 0.85;
       return;
@@ -3302,7 +3721,7 @@ export class HabitatPet {
   }
 
   private tryBeginPounceFromSwipe(
-    pointer: IdeLocalPointer | null,
+    pointer: IdeLocalPointerCoords | null,
     ledges: Ledge[],
     geometryStale: boolean,
   ): void {
@@ -3382,7 +3801,7 @@ export class HabitatPet {
   private startPointerPounce(
     directionLeft: boolean,
     ledge: Ledge,
-    pointer: IdeLocalPointer,
+    pointer: IdeLocalPointerCoords,
   ): void {
     const def = this.habitat.activities[POINTER_POUNCE_ACTIVITY];
     const animKey = def?.animation ?? "pounce";
@@ -3476,7 +3895,7 @@ export class HabitatPet {
   }
 
   private pointerBeyondReachSide(
-    pointer: IdeLocalPointer,
+    pointer: IdeLocalPointerCoords,
     directionLeft: boolean,
     reach: ReachBox,
   ): boolean {
@@ -3486,14 +3905,14 @@ export class HabitatPet {
   }
 
   private pointerInContinuationBand(
-    pointer: IdeLocalPointer,
+    pointer: IdeLocalPointerCoords,
     reach: ReachBox,
   ): boolean {
     return pointer.y >= reach.y0 && pointer.y <= reach.y1;
   }
 
   private tickPounceContinuationPointer(
-    pointer: IdeLocalPointer | null,
+    pointer: IdeLocalPointerCoords | null,
     ledge: Ledge | null,
   ): void {
     const pp = this.pouncePlayback;
@@ -3548,7 +3967,7 @@ export class HabitatPet {
   }
 
   private accumulatePounceContinuationMotion(
-    pointer: IdeLocalPointer,
+    pointer: IdeLocalPointerCoords,
     directionLeft: boolean,
   ): boolean {
     const now = pointer.observedAtMs;
@@ -3732,7 +4151,7 @@ export class HabitatPet {
   }
 
   private updateSitLookPointerSpeed(
-    pointer: IdeLocalPointer | null,
+    pointer: IdeLocalPointerCoords | null,
     dtMs: number,
   ): void {
     if (this.activityId !== SIT_LOOK_ACTIVITY_ID || this.sitLookPhase !== "gaze") {

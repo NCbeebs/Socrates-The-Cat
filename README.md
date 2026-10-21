@@ -1,6 +1,6 @@
 # Socrates the Cat
 
-A desktop cat that walks the real tab strips, panel edges, and status bar in **VS Code or Cursor**. He grooms, sleeps, dreams, follows your pointer, and falls when his ledge disappears. The overlay is click-through so you can keep working.
+A desktop cat that walks the real tab strips, panel edges, and status bar in **VS Code or Cursor**. He grooms, sleeps, dreams, reacts to your pointer, and falls when his ledge disappears. You can **click-and-hold to pick him up** and drop him on another ledge when he blocks your code. The overlay stays click-through so you can keep working.
 
 **Windows source preview.** There is no published installer or IDE extension yet. Built with **Tauri 2, Rust, TypeScript 6, Vite 8, and Windows UI Automation**.
 
@@ -15,6 +15,8 @@ A desktop cat that walks the real tab strips, panel edges, and status bar in **V
 **Portal hop** (rare—emerges on another walkable ledge):
 
 ![Walking through a portal to another ledge](docs/images/socrates1.gif)
+
+**Pick up and move** — click-and-hold (~250 ms) inside Socrates’s pointer-reach area, then drag and release. The reach box matches swipe/pounce (yellow outline with `socrates --debug`). Release lands him on the next walkable ledge below his feet. Clicks still pass through to the editor; dragging may select text underneath.
 
 He also walks and turns at ledge ends, stretches, grooms, sits and looks at the pointer, clings to moving horizontal splits, and slides down dividers. Activities and clips are in [`pet.json`](assets/pets/default-cat/pet.json).
 
