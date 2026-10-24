@@ -52,6 +52,51 @@ function makePet() {
   return pet;
 }
 
+test("expired nap completes each segmented dream's loops and outro before waking", () => {
+  const sleep = manifest.habitat.activities.sleep;
+  for (const key of [sleep.dreamRestAnimation, ...sleep.dreamAnimations]) {
+    const pet = makePet();
+    pet.activityId = "sleep";
+    pet.sleepPhase = "sleeping";
+    pet.motionPhase = "grounded";
+    pet.awaitGeometryMs = 0;
+    pet.animationKey = key;
+    pet.sleepRestMsLeft = 1;
+    pet.startSegmentedPlay(key);
+    pet.pickSleepDreamAnimation = () => assert.fail("expired nap must not pick another segment");
+
+    const seg = manifest.habitat.animations[key].segmentedLoop;
+    const frameCount = (seg.intro?.length ?? 0)
+      + pet.segmentedPlay.loopsRemaining * seg.loop.length
+      + (seg.outro?.length ?? 0);
+    pet.tickSleepSequence(16);
+    assert.equal(pet.sleepRestMsLeft, -15);
+    assert.equal(pet.animationKey, key);
+    for (let frame = 1; frame < frameCount; frame++) {
+      pet.advanceSegmentedPhaseFrame();
+      assert.equal(pet.sleepPhase, "sleeping", `${key} woke before completing frame ${frameCount}`);
+      assert.equal(pet.animationKey, key);
+    }
+    assert.equal(pet.segmentedPlay.phase, "outro");
+    pet.advanceSegmentedPhaseFrame();
+    assert.equal(pet.sleepPhase, "waking");
+    assert.equal(pet.animationKey, "sleep_exit");
+    assert.equal(pet.segmentedPlay, null);
+  }
+});
+
+test("expired nap without segmented playback wakes immediately", () => {
+  const pet = makePet();
+  pet.activityId = "sleep";
+  pet.sleepPhase = "sleeping";
+  pet.motionPhase = "grounded";
+  pet.awaitGeometryMs = 0;
+  pet.sleepRestMsLeft = 1;
+  pet.tickSleepSequence(16);
+  assert.equal(pet.sleepPhase, "waking");
+  assert.equal(pet.animationKey, "sleep_exit");
+});
+
 function update(pet, surfaces, viewport, sx = 1, sy = sx, dt = 16, pointer = null, revision = 1, geometryMeta = meta) {
   return pet.update(dt, surfaces, sx, sy, viewport, pointer, revision, geometryMeta);
 }

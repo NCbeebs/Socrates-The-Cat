@@ -82,7 +82,11 @@ Without an explicit selection, startup checks process ancestry and defaults to C
 
 ## Diagnostics and troubleshooting
 
-The terminal shows a live activity journal and technical warnings. Run `socrates --debug` or `npm run debug` for a HUD, surface outlines, pointer reach box, and raw development output. See the [debug screenshot](docs/images/debug.png), or use `socrates --help`.
+The terminal shows a live activity journal and technical warnings. Run `socrates --debug` or `npm run debug` for a HUD, surface outlines (green walkable, orange climbable), pointer reach box (yellow), and raw development output with `DEBUG` / `JOURNAL` lines:
+
+![socrates --debug: ledge wireframes, pointer reach box, HUD, and terminal diagnostics](docs/images/debug.png)
+
+Use `socrates --help` for command help.
 
 Logs are stored locally under `%LOCALAPPDATA%\Socrates\logs`; the launcher prints the exact directory and session ID. Files rotate at 5 MiB with three backup segments, with cleanup of old logs after 14 days when logging runs. See the [developer guide](companion/README.md) for file names and overrides.
 

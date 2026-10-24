@@ -2,7 +2,7 @@
   "id": "default-cat",
   "displayName": "Socrates",
   "description": "Per-clip 512×512 sheets (4×4 × 128px cells); frameSize matches clip cells on overlay.",
-  "spriteVersionNumber": 35,
+  "spriteVersionNumber": 38,
   "habitat": {
     "schemaVersion": 3,
     "defaultClip": "socs-idle.png",
@@ -81,6 +81,19 @@
         "fps": 10,
         "loop": false
       },
+      "groom_4": {
+        "clip": "Socs-grooming-4.png",
+        "frames": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "fps": 10,
+        "loop": false,
+        "segmentedLoop": {
+          "intro": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+          "loop": [8, 9, 10, 11, 12, 13, 14, 15],
+          "minLoops": 6,
+          "maxLoops": 6,
+          "outro": [5, 4, 3, 2, 1, 0]
+        }
+      },
       "stretch": {
         "clip": "Socs-stretch.png",
         "frames": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -138,6 +151,18 @@
           "minLoops": 4,
           "maxLoops": 6,
           "outro": [10, 11, 12, 13, 14, 15]
+        }
+      },
+      "dream_snoozing": {
+        "clip": "Socs-snoozing.png",
+        "frames": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "fps": 8,
+        "loop": false,
+        "segmentedLoop": {
+          "loop": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+          "minLoops": 10,
+          "maxLoops": 25,
+          "outro": [0]
         }
       },
       "sleep_exit": {
@@ -290,7 +315,7 @@
     "activities": {
       "idle": {
         "animation": "idle",
-        "weight": 20,
+        "weight": 10,
         "minMs": 3000,
         "maxMs": 5000,
         "cooldownMs": 8000
@@ -316,6 +341,13 @@
         "maxMs": 1600,
         "oneShot": true
       },
+      "groom_4": {
+        "animation": "groom_4",
+        "weight": 20,
+        "minMs": 7000,
+        "maxMs": 7000,
+        "oneShot": true
+      },
       "walk": {
         "animation": "walk",
         "weight": 10,
@@ -328,7 +360,10 @@
         "preSleepAnimation": "stretch",
         "postSleepAnimation": "stretch",
         "dreamAnimations": ["dream_birds", "dream_mice", "dream_comfy"],
-        "weight": 30,
+        "dreamRestAnimation": "dream_snoozing",
+        "dreamRestWeight": 2,
+        "dreamSpectacleWeight": 1,
+        "weight": 20,
         "minMs": 15000,
         "maxMs": 30000
       },
