@@ -4372,10 +4372,13 @@ export class HabitatPet {
       return;
     }
 
-    this.animationKey = def.animation ?? "idle";
+    const animKey = def.animation ?? "idle";
+    this.animationKey = animKey;
     this.activityMsLeft = this.randMs(def);
     this.frameIndex = 0;
     this.frameAccumulator = 0;
+    // Idle one-shots with `segmentedLoop` (e.g. groom_4) use the same player as sleep/dream clips.
+    this.startSegmentedPlay(animKey);
   }
 
   private randMs(def: ActivityDef): number {
@@ -4609,6 +4612,11 @@ export class HabitatPet {
     }
     if (this.isDreamAnimationKey(key) && phase === "sleeping") {
       this.beginSleepExit();
+      return;
+    }
+    const act = this.habitat.activities[this.activityId];
+    if (act?.oneShot && act.animation === key) {
+      this.pickNextActivity();
     }
   }
 
