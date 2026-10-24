@@ -80,8 +80,17 @@ export interface ActivityDef {
   /** Idle/walk: activity duration. `sleep`: fallback timer if the chosen dream clip has no `segmentedLoop`. */
   minMs: number;
   maxMs: number;
-  /** `sleep` only: uniform random pick when entering the dream rest phase (`HabitatPet.beginSleepDreaming`). */
+  /**
+   * `sleep` only: spectacle dream clips (birds/mice/etc.); uniform among this list when
+   * `dreamSpectacleWeight` wins the rest-vs-spectacle roll (`HabitatPet.pickSleepDreamAnimation`).
+   */
   dreamAnimations?: string[];
+  /** `sleep` only: breathing/rest clip (e.g. `dream_snoozing`); not listed in `dreamAnimations`. */
+  dreamRestAnimation?: string;
+  /** Relative weight vs `dreamSpectacleWeight` (default 2 → ~66.7% rest when spectacle weight is 1). */
+  dreamRestWeight?: number;
+  /** Combined weight for one uniform pick from `dreamAnimations` (default 1 → ~33.3% spectacle). */
+  dreamSpectacleWeight?: number;
   /** `sleep` only: `segmentedLoop` clip before `sleep_enter` (e.g. yawn/stretch). */
   preSleepAnimation?: string;
   /** `sleep` only: same style clip after `sleep_exit` before idle pool. */

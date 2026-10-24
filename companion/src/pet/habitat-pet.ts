@@ -678,7 +678,7 @@ export class HabitatPet {
   private viewScale = 1;
   private viewport = { w: 0, h: 0 };
   private sleepPhase: SleepPhase = "awake";
-  /** Fallback dream rest timer when segmented play is unavailable; from `activities.sleep` minMs/maxMs. */
+  /** Nap budget during `sleeping` (`activities.sleep` minMs/maxMs); wake deferred until dream segment ends when segmented. */
   private sleepRestMsLeft = 0;
   private vyLocal = 0;
   private awaitGeometryMs = 0;
@@ -1136,18 +1136,18 @@ export class HabitatPet {
       return;
     }
 
-    const dreamAnim = this.habitat.animations[this.animationKey];
-    if (
-      this.isDreamAnimationKey(this.animationKey) &&
-      dreamAnim?.segmentedLoop
-    ) {
-      return;
-    }
-
     this.sleepRestMsLeft -= dtMs;
-    if (this.sleepRestMsLeft <= 0) {
+    if (this.sleepRestMsLeft <= 0 && !this.activeSleepDreamSegmentedPlay()) {
       this.beginSleepExit();
     }
+  }
+
+  /** True while a manifest dream/rest clip is playing via `segmentedPlay` during `sleeping`. */
+  private activeSleepDreamSegmentedPlay(): boolean {
+    if (this.sleepPhase !== "sleeping" || !this.segmentedPlay) {
+      return false;
+    }
+    return this.isDreamAnimationKey(this.segmentedPlay.animationKey);
   }
 
   /** Manifest `activities.sleep.preSleepAnimation` when it has `segmentedLoop`. */
@@ -1213,38 +1213,74 @@ export class HabitatPet {
 
   private beginSleepDreaming() {
     const def = this.habitat.activities[SLEEP_ACTIVITY];
+    this.sleepPhase = "sleeping";
+    this.sleepRestMsLeft = def ? this.randMs(def) : 20_000;
+    this.beginSleepDreamSegment();
+  }
+
+  /** Next rest/spectacle clip during `sleeping`; chains until `sleepRestMsLeft` expires at a segment boundary. */
+  private beginSleepDreamSegment() {
     const dreamKey = this.pickSleepDreamAnimation();
     if (!dreamKey) {
       this.beginSleepExit();
       return;
     }
-    this.sleepPhase = "sleeping";
     this.animationKey = dreamKey;
     this.frameIndex = 0;
     this.frameAccumulator = 0;
-    this.sleepRestMsLeft = 0;
-    if (!this.startSegmentedPlay(dreamKey)) {
-      this.sleepRestMsLeft = def ? this.randMs(def) : 20_000;
-    }
+    this.startSegmentedPlay(dreamKey);
   }
 
-  /** Manifest `activities.sleep.dreamAnimations` or any `dream_*` animation with a clip. */
+  /**
+   * Manifest `dreamRestAnimation` vs `dreamAnimations` using `dreamRestWeight` /
+   * `dreamSpectacleWeight` (defaults 2:1). Legacy: uniform over `dream_*` when unset.
+   */
   private pickSleepDreamAnimation(): string | null {
     const def = this.habitat.activities[SLEEP_ACTIVITY];
-    const candidates = (def?.dreamAnimations?.length
-      ? def.dreamAnimations
-      : Object.keys(this.habitat.animations).filter((k) =>
-          k.startsWith("dream_"),
-        )
-    ).filter((key) => this.habitat.animations[key]?.clip);
-    if (!candidates.length) {
+    if (!def) {
       return null;
     }
-    return candidates[Math.floor(Math.random() * candidates.length)] ?? null;
+    const restKey = def.dreamRestAnimation;
+    const restClip = restKey ? this.habitat.animations[restKey]?.clip : undefined;
+    const restAnim = restKey && restClip ? restKey : null;
+    const restWeight = restAnim ? (def.dreamRestWeight ?? 2) : 0;
+    const specWeight = def.dreamSpectacleWeight ?? 1;
+
+    const spectacle = (def.dreamAnimations?.length
+      ? def.dreamAnimations
+      : Object.keys(this.habitat.animations).filter(
+          (k) => k.startsWith("dream_") && k !== restKey,
+        )
+    ).filter((key) => this.habitat.animations[key]?.clip);
+
+    const total = restWeight + specWeight;
+    if (total > 0 && (restAnim || spectacle.length)) {
+      const roll = Math.random() * total;
+      if (restAnim && roll < restWeight) {
+        return restAnim;
+      }
+      if (spectacle.length) {
+        return (
+          spectacle[Math.floor(Math.random() * spectacle.length)] ?? restAnim
+        );
+      }
+      return restAnim;
+    }
+
+    const legacy = Object.keys(this.habitat.animations).filter((k) =>
+      k.startsWith("dream_"),
+    ).filter((key) => this.habitat.animations[key]?.clip);
+    if (!legacy.length) {
+      return null;
+    }
+    return legacy[Math.floor(Math.random() * legacy.length)] ?? null;
   }
 
   private isDreamAnimationKey(animationKey: string): boolean {
     const def = this.habitat.activities[SLEEP_ACTIVITY];
+    if (def?.dreamRestAnimation === animationKey) {
+      return true;
+    }
     if (def?.dreamAnimations?.includes(animationKey)) {
       return true;
     }
@@ -4611,7 +4647,11 @@ export class HabitatPet {
       return;
     }
     if (this.isDreamAnimationKey(key) && phase === "sleeping") {
-      this.beginSleepExit();
+      if (this.sleepRestMsLeft > 0) {
+        this.beginSleepDreamSegment();
+      } else {
+        this.beginSleepExit();
+      }
       return;
     }
     const act = this.habitat.activities[this.activityId];

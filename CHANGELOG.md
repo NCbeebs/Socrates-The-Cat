@@ -4,6 +4,9 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ## Unreleased
 
+- Verify expired naps finish segmented dream/rest loops and outro before waking, with regression coverage for all four dream/rest clips and immediate waking without segmented playback.
+- Art review: keep the cat's eyes closed in frames 2-11 of `Socs-snoozing.png`, using frame 1's eye regions in the open Pixelorama working canvas; other pixels and frames are unchanged (not yet saved or exported).
+- Add `dream_snoozing` (`Socs-snoozing.png`) as the sleep rest clip (10–25 breath loops); spectacle dreams stay on `dreamAnimations`. During sleep, weighted picks are ~66.7% snooze / ~33.3% spectacle (2:1), and rest/dream segments chain until `activities.sleep` min/max rest time elapses, then `sleep_exit`. Expired nap budget defers wake until the current segmented dream/rest clip finishes (loops + outro).
 - Add `groom_4` (`Socs-grooming-4.png`): full 16-frame intro, six loops of the lick/rub cells (frames 9–16), then stand-up outro (frames 6→1); idle activity pool uses `segmentedLoop` on weighted picks. Rebalance idle/sleep/groom weights (idle 10, sleep 20, `groom_4` 20; pool total 100 with existing groom variants, walk, and sit_look).
 - Art review: removed the tongue from frames 11, 12, 15, and 16 of the grooming spritesheet and brought frame 11's raised paw in front of its ear for the head-rubbing pose in the open Pixelorama working canvas (not yet saved or exported).
 - Fix weak, pulsing drag swing: measure horizontal speed between cursor samples and smoothly retain the tilt between polls. Swing follows the same direction for either facing, stays within 11 degrees around the grip, and resets immediately on release or cancellation. Pointer polling remains at 50 ms.

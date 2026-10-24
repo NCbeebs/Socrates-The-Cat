@@ -2,7 +2,7 @@
   "id": "default-cat",
   "displayName": "Socrates",
   "description": "Per-clip 512×512 sheets (4×4 × 128px cells); frameSize matches clip cells on overlay.",
-  "spriteVersionNumber": 37,
+  "spriteVersionNumber": 38,
   "habitat": {
     "schemaVersion": 3,
     "defaultClip": "socs-idle.png",
@@ -151,6 +151,18 @@
           "minLoops": 4,
           "maxLoops": 6,
           "outro": [10, 11, 12, 13, 14, 15]
+        }
+      },
+      "dream_snoozing": {
+        "clip": "Socs-snoozing.png",
+        "frames": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "fps": 8,
+        "loop": false,
+        "segmentedLoop": {
+          "loop": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+          "minLoops": 10,
+          "maxLoops": 25,
+          "outro": [0]
         }
       },
       "sleep_exit": {
@@ -348,6 +360,9 @@
         "preSleepAnimation": "stretch",
         "postSleepAnimation": "stretch",
         "dreamAnimations": ["dream_birds", "dream_mice", "dream_comfy"],
+        "dreamRestAnimation": "dream_snoozing",
+        "dreamRestWeight": 2,
+        "dreamSpectacleWeight": 1,
         "weight": 20,
         "minMs": 15000,
         "maxMs": 30000
