@@ -4,6 +4,8 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ## Unreleased
 
+- Expand [vsc-ext.md](vsc-ext.md) with Context7/official-documentation research, an unchanged GitHub clone workflow contract, executable/tooling reuse, file/dependency budgets, upstream/downstream lifecycle analysis, and detailed phases ending in mandatory cleanup before publication. Planning only; no extension or runtime changes.
+- Document Arch Linux/CachyOS compatibility research and a staged Linux implementation plan in [linux_support.md](linux_support.md), including X11/Wayland boundaries, Windows regression gates, and final cleanup; runtime support remains Windows-only.
 - Verify expired naps finish segmented dream/rest loops and outro before waking, with regression coverage for all four dream/rest clips and immediate waking without segmented playback.
 - Art review: keep the cat's eyes closed in frames 2-11 of `Socs-snoozing.png`, using frame 1's eye regions in the open Pixelorama working canvas; other pixels and frames are unchanged (not yet saved or exported).
 - Add `dream_snoozing` (`Socs-snoozing.png`) as the sleep rest clip (10–25 breath loops); spectacle dreams stay on `dreamAnimations`. During sleep, weighted picks are ~66.7% snooze / ~33.3% spectacle (2:1), and rest/dream segments chain until `activities.sleep` min/max rest time elapses, then `sleep_exit`. Expired nap budget defers wake until the current segmented dream/rest clip finishes (loops + outro).
