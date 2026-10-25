@@ -1,6 +1,7 @@
 mod diagnostics;
 mod habitat_config;
 mod ide_host;
+mod managed_lifecycle;
 mod runtime_log;
 mod surface_mapper;
 
@@ -562,6 +563,23 @@ fn note_log_bridge_failure() {
 
 pub fn run() {
     runtime_log::init();
+    let managed_session = match managed_lifecycle::resolve_managed_launch() {
+        Ok(session) => session,
+        Err(code) if code == "duplicate" => {
+            runtime_log::info(
+                "managed",
+                "duplicate_start",
+                "Existing managed session responded; exiting without overlay.",
+            );
+            runtime_log::flush();
+            return;
+        }
+        Err(message) => {
+            runtime_log::error("managed", "launch_failed", &message);
+            runtime_log::flush();
+            std::process::exit(1);
+        }
+    };
     diagnostics::mark_process_start();
     let ide_session = ide_host::session_ide_host();
     let mode = if foreground_ide_enabled() {
@@ -607,7 +625,8 @@ pub fn run() {
         presentation.debug_hud,
         presentation.debug_surfaces,
     );
-    let result = tauri::Builder::default()
+    let mut managed_session = managed_session;
+    let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             load_surfaces,
             get_ide_bounds,
@@ -617,6 +636,7 @@ pub fn run() {
             runtime_log::write_runtime_log
         ])
         .setup(|app| {
+            managed_lifecycle::register_app_handle(app.handle().clone());
             spawn_live_uia_thread(app.handle().clone());
 
             let window = app
@@ -643,6 +663,9 @@ pub fn run() {
                 runtime_log::error("overlay", "positioning_failed", &error);
             }
             diagnostics::log_native_runtime_ready();
+            if managed_lifecycle::is_managed_launch() {
+                managed_lifecycle::mark_runtime_ready();
+            }
 
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
@@ -657,7 +680,20 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
+    let result = match app {
+        Ok(app) => {
+            app.run(move |_handle, event| {
+                if let tauri::RunEvent::ExitRequested { .. } = event {
+                    if let Some(session) = managed_session.as_mut() {
+                        managed_lifecycle::finalize_managed_session(session);
+                    }
+                }
+            });
+            Ok(())
+        }
+        Err(error) => Err(error),
+    };
     if let Err(error) = &result {
         runtime_log::error("app", "runtime_failed", &error.to_string());
     } else {
@@ -1013,4 +1049,14 @@ mod windows {
         }
         TRUE
     }
+}
+
+/// Optional fallback runner (`cargo run --features habitat-unit-tests --bin habitat_unit`).
+#[cfg(feature = "habitat-unit-tests")]
+pub fn run_habitat_unit_tests() {
+    managed_lifecycle::run_unit_tests();
+    habitat_config::run_unit_tests();
+    ide_host::run_unit_tests();
+    runtime_log::run_unit_tests();
+    surface_mapper::run_unit_tests();
 }

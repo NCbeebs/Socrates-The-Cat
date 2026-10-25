@@ -1,0 +1,84 @@
+{
+  "name": "socrates-the-cat",
+  "displayName": "Socrates the Cat",
+  "description": "A desktop cat that walks real tab strips, panel edges, and status bar in VS Code (Windows). Click-through overlay; pick up and move. Start, stop, and diagnostics for the native companion.",
+  "version": "0.1.0",
+  "publisher": "GeneralChromodynamics",
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "homepage": "https://github.com/NCbeebs/Socrates-The-Cat#vs-code-extension-in-development",
+  "bugs": {
+    "url": "https://github.com/NCbeebs/Socrates-The-Cat/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NCbeebs/Socrates-The-Cat.git",
+    "directory": "extension"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": ["Other"],
+  "keywords": [
+    "cat",
+    "pet",
+    "pets",
+    "desktop pet",
+    "ide pet",
+    "ide-pet",
+    "virtual pet",
+    "mascot",
+    "companion",
+    "socrates",
+    "overlay",
+    "animated",
+    "clippy",
+    "fun",
+    "windows"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "extensionKind": ["ui"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "socrates.start",
+        "title": "Start",
+        "category": "Socrates"
+      },
+      {
+        "command": "socrates.stop",
+        "title": "Stop",
+        "category": "Socrates"
+      },
+      {
+        "command": "socrates.showDiagnostics",
+        "title": "Show Diagnostics",
+        "category": "Socrates"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test tests/*.test.mjs",
+    "package:win": "node scripts/package-win.mjs",
+    "package:win:fast": "node scripts/package-win.mjs --skip-companion-build",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "1.74.0",
+    "@vscode/vsce": "^3.7.1",
+    "typescript": "~5.7.2"
+  }
+}

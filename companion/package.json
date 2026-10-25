@@ -25,6 +25,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:build:release": "tauri build --no-bundle",
     "tauri:dev": "tauri dev",
     "tauri:dev:debug": "cross-env HABITAT_DEBUG=1 tauri dev"
   },

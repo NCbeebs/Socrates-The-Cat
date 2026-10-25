@@ -134,8 +134,8 @@ pub fn session_ide_host() -> SessionIdeHost {
     *SLOT.get_or_init(resolve_session_ide_host)
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, feature = "habitat-unit-tests"))]
+mod unit_tests {
     use super::*;
     use std::sync::Mutex;
 
@@ -156,8 +156,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn parse_host_values() {
+    pub(super) fn parse_host_values() {
         assert_eq!(parse_explicit_host("code"), Some(IdeHost::Code));
         assert_eq!(parse_explicit_host("vscode"), Some(IdeHost::Code));
         assert_eq!(parse_explicit_host("cursor"), Some(IdeHost::Cursor));
@@ -165,8 +164,7 @@ mod tests {
         assert!(parse_explicit_host("cod").is_none());
     }
 
-    #[test]
-    fn env_code_overrides_auto() {
+    pub(super) fn env_code_overrides_auto() {
         with_env(&[("HABITAT_IDE_HOST", Some("code"))], || {
             let s = resolve_session_ide_host();
             assert_eq!(s.host, IdeHost::Code);
@@ -174,8 +172,7 @@ mod tests {
         });
     }
 
-    #[test]
-    fn invalid_env_is_not_auto() {
+    pub(super) fn invalid_env_is_not_auto() {
         with_env(&[("HABITAT_IDE_HOST", Some("cod"))], || {
             let s = resolve_session_ide_host();
             assert_eq!(s.host, IdeHost::Cursor);
@@ -183,8 +180,7 @@ mod tests {
         });
     }
 
-    #[test]
-    fn ancestry_walk_prefers_nearest_ide() {
+    pub(super) fn ancestry_walk_prefers_nearest_ide() {
         assert_eq!(
             host_from_ancestor_process_names(&["pwsh.exe", "Code.exe", "explorer.exe"]),
             Some(IdeHost::Code)
@@ -199,10 +195,48 @@ mod tests {
         );
     }
 
-    #[test]
-    fn process_name_matching() {
+    pub(super) fn process_name_matching() {
         assert!(IdeHost::Code.matches_process_name("Code.exe"));
         assert!(IdeHost::Cursor.matches_process_name("Cursor.exe"));
         assert!(!IdeHost::Code.matches_process_name("Cursor.exe"));
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unit_tests;
+
+    #[test]
+    fn parse_host_values() {
+        unit_tests::parse_host_values();
+    }
+
+    #[test]
+    fn env_code_overrides_auto() {
+        unit_tests::env_code_overrides_auto();
+    }
+
+    #[test]
+    fn invalid_env_is_not_auto() {
+        unit_tests::invalid_env_is_not_auto();
+    }
+
+    #[test]
+    fn ancestry_walk_prefers_nearest_ide() {
+        unit_tests::ancestry_walk_prefers_nearest_ide();
+    }
+
+    #[test]
+    fn process_name_matching() {
+        unit_tests::process_name_matching();
+    }
+}
+
+#[cfg(feature = "habitat-unit-tests")]
+pub(crate) fn run_unit_tests() {
+    unit_tests::parse_host_values();
+    unit_tests::env_code_overrides_auto();
+    unit_tests::invalid_env_is_not_auto();
+    unit_tests::ancestry_walk_prefers_nearest_ide();
+    unit_tests::process_name_matching();
 }

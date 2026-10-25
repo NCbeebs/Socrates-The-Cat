@@ -2,7 +2,17 @@
 
 A desktop cat that walks the real tab strips, panel edges, and status bar in **VS Code or Cursor**. He grooms, sleeps, dreams, reacts to your pointer, and falls when his ledge disappears. You can **click-and-hold to pick him up** and drop him on another ledge when he blocks your code. The overlay stays click-through so you can keep working.
 
-**Windows source preview.** There is no published installer or IDE extension yet. Built with **Tauri 2, Rust, TypeScript 6, Vite 8, and Windows UI Automation**.
+**Windows source preview.** The supported install path is still **clone and `socrates`** (below). A **VS Code extension** is in active development: you can build a local **VSIX** and install it on desktop VS Code for Windows—**not** on the Marketplace yet. Built with **Tauri 2, Rust, TypeScript 6, Vite 8, and Windows UI Automation**.
+
+## Status
+
+| Path | Who it is for | How you run Socrates |
+|---|---|---|
+| **GitHub clone** | Contributors and source users | `npm link` → `socrates` in the IDE terminal ([Install and run](#install-and-run)) |
+| **VS Code extension (dev)** | Desktop VS Code on Windows x64 without using the clone launcher | Build/install a VSIX ([VS Code extension](#vs-code-extension-in-development)); **Command Palette** → **Socrates: Start** / **Stop** / **Show Diagnostics** |
+| **Marketplace** | Everyone (future) | Not published yet |
+
+Clone and extension both use the same native companion and pet assets. The extension does not replace or block the clone workflow.
 
 ## Demo
 
@@ -16,7 +26,7 @@ A desktop cat that walks the real tab strips, panel edges, and status bar in **V
 
 ![Walking through a portal to another ledge](docs/images/socrates1.gif)
 
-**Pick up and move** — click-and-hold (~250 ms) inside Socrates’s pointer-reach area, then drag and release. The reach box matches swipe/pounce (yellow outline with `socrates --debug`). Release lands him on the next walkable ledge below his feet. Clicks still pass through to the editor; dragging may select text underneath.
+**Pick up and move** — click-and-hold (~250 ms) inside Socrates’s pointer-reach area, then drag and release. The reach box matches swipe/pounce (yellow outline with `socrates --debug`); in normal mode a small red dot on the overlay marks when your cursor is in that reach zone. Release lands him on the next walkable ledge below his feet. Clicks still pass through to the editor; dragging may select text underneath.
 
 He also walks and turns at ledge ends, stretches, grooms, sits and looks at the pointer, clings to moving horizontal splits, and slides down dividers. Activities and clips are in [`pet.json`](assets/pets/default-cat/pet.json).
 
@@ -100,6 +110,8 @@ Logs are stored locally under `%LOCALAPPDATA%\Socrates\logs`; the launcher print
 | PowerShell blocks scripts | Use `npm.cmd` and `socrates.cmd` |
 | Unexpected HUD or wireframes | Clear `HABITAT_DEBUG*` shell overrides and launch without `--debug` |
 | Build or logging failure | Check the reported error, disk space, and directory permissions; `SOCRATES_LOG_DIR` can select another log directory |
+| Extension: no **Socrates** commands | Confirm the extension is enabled; **Ctrl+Shift+P** and search `Socrates`; reload the window once after installing a VSIX |
+| Extension: Start fails | Run **Socrates: Show Diagnostics**; ensure **WebView2** is installed; rebuild with `npm run package:win` if the bundled `companion.exe` is missing or stale |
 
 ## Development
 
@@ -113,12 +125,57 @@ npm run build
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-`npm run build` builds the frontend only. See [commands and environment settings](companion/README.md), [architecture](docs/architecture.md), and [changelog](CHANGELOG.md) for details.
+`npm run build` builds the frontend only. Release native binary: `npm run tauri:build:release` (see [companion README](companion/README.md)).
+
+### Project layout
+
+| Path | Purpose |
+|---|---|
+| `companion/` | Tauri host, launcher (`socrates`), pet frontend, Windows UIA |
+| `assets/pets/default-cat/` | Sprites and `pet.json` (bundled by Vite) |
+| `extension/` | VS Code UI extension (Windows x64 VSIX); see [extension/README.md](extension/README.md) |
+| `extension/media/` | Marketplace icon; maintainer screenshot spec (`README.md` not in VSIX) |
+| `docs/` | Architecture and images |
+| [vsc-ext.md](vsc-ext.md) | Extension implementation tracker (phases 0–7) |
+
+See [architecture](docs/architecture.md) and [changelog](CHANGELOG.md).
+
+### VS Code extension (in development)
+
+Requires **desktop VS Code on Windows** (VS Code 1.74+). The extension runs locally (`extensionKind: ui`); it does not start Socrates inside remote SSH/WSL sessions until that is explicitly tested and documented.
+
+**Build and package** (from repo root; needs a release `companion.exe`):
+
+```powershell
+cd companion
+npm run tauri:build:release
+cd ..\extension
+npm ci
+npm test
+npm run package:win
+```
+
+`npm run package:win` runs `npm ci` and `tauri:build:release` in `companion/` by default (`package:win:fast` skips the native rebuild). Output: `extension/stage/socrates-the-cat-*-win32-x64.vsix` and `extension/stage/bundle-manifest.json` (versions and sha256).
+
+**Install and run:** Extensions → **…** → **Install from VSIX** → select the VSIX under `extension/stage/`. Open the **Command Palette** (**Ctrl+Shift+P**):
+
+- **Socrates: Start** — launch or attach to the managed cat (targets VS Code via `HABITAT_IDE_HOST=code`)
+- **Socrates: Stop** — stop the shared managed instance for this session
+- **Socrates: Show Diagnostics** — pipe status, companion path, managed log directory (`%LOCALAPPDATA%\Socrates\logs\vscode-managed`)
+
+**Coexistence:** `socrates` from a clone and the extension-managed cat are independent. Multiple VS Code windows can attach to one managed instance; closing a window releases that window’s ownership (the cat stays up while another window remains attached). **Stop** shuts down the shared managed instance for the session.
+
+**Not yet validated:** Remote SSH/WSL/container UI, upgrade/uninstall with several windows open, or a clean machine with no Node/Rust installed (VSIX ships the native binary). See [vsc-ext.md](vsc-ext.md) Phase 5–6 gaps.
+
+**Extension development (F5):** open this repo in VS Code → **Run and Debug** → **Socrates extension**. Uses the release binary at `companion/src-tauri/target/release/companion.exe` when no bundled exe is present.
+
+Implementation status and pre-Marketplace checklist: [vsc-ext.md](vsc-ext.md).
 
 Issues and PRs are welcome. Bug reports should include Windows and IDE versions, launch command, steps to reproduce, session ID, and relevant **reviewed/redacted** logs. Report suspected security vulnerabilities privately to [generalchromodynamics@protonmail.com](mailto:generalchromodynamics@protonmail.com).
 
 ## Roadmap
 
+- VS Code Marketplace release (Phase 6 prep done; manual upload verify + Phase 7, then publish when ready)
 - Refined animations
 - Linux and Mac support
 

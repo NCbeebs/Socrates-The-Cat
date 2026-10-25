@@ -14,6 +14,26 @@ Native dependencies include `uiautomation` for layout inspection, `windows` for 
 
 Pet art and behavior live in [`assets/pets/default-cat/pet.json`](../assets/pets/default-cat/pet.json) (clip sheets + weighted activities).
 
+## VS Code extension (managed companion)
+
+Optional Windows extension in [`extension/`](../extension/) — thin controller only; same `companion.exe`, pet engine, and assets as the clone path.
+
+```text
+VS Code (UI) → extension/src/session.ts → named pipe (protocol v1)
+                    ↓ spawn/attach
+              companion.exe --habitat-managed
+                    ↓
+              managed_lifecycle.rs (mutex + logon-SID DACL pipe)
+                    ↓
+              Tauri overlay + UIA (HABITAT_IDE_HOST=code)
+```
+
+- **Source launches** never set `HABITAT_MANAGED`; they do not join the pipe or session mutex.
+- **One managed cat per Windows session** (session-suffixed pipe/mutex); multiple VS Code windows **attach** with distinct client IDs; **release** on window close; **stop** exits the native process.
+- **Logs:** extension-managed runs default to `%LOCALAPPDATA%\Socrates\logs\vscode-managed` via `SOCRATES_LOG_DIR`.
+
+Tracker and parity gaps: [vsc-ext.md](../vsc-ext.md).
+
 ## Geometry (live UIA)
 
 Rust [`surface_mapper.rs`](../companion/src-tauri/src/surface_mapper.rs) polls UI Automation on the foreground window of the **session IDE host** ([`ide_host.rs`](../companion/src-tauri/src/ide_host.rs)—`Code.exe` or `Cursor.exe`, chosen at launch):
@@ -50,7 +70,7 @@ The launcher shows structured `debug` lines in the terminal when `HABITAT_DEBUG_
 
 ## Tests
 
-From `companion/`: `npm test`, `npm run build`, and `cargo test --locked --manifest-path src-tauri/Cargo.toml`. The frontend build does not build the native executable.
+From `companion/`: `npm test`, `npm run build`, and `cargo test --locked --manifest-path src-tauri/Cargo.toml` (optional Windows fallback: `cargo run --features habitat-unit-tests --bin habitat_unit` — see [companion/README.md](../companion/README.md)). The frontend build does not build the native executable.
 
 ## Security and privacy boundaries
 

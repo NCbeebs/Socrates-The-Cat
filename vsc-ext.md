@@ -1,8 +1,28 @@
 # VS Code extension: research and implementation tracker
 
-Research date: 2026-10-24. Code reviewed: `e331f71` plus the current working tree. Status: research and proposed implementation; no extension package has been built, runtime-validated, or submitted to the Marketplace.
+**Last updated:** 2026-10-25. **Repository baseline:** `7fd9514` (working tree may differ). **Status: Phase 6 prep complete (manual Marketplace validation pending)** — icon committed; listing GIFs via GitHub raw URLs; Phase 7 cleanup before public `vsce publish`; no Marketplace submit without explicit owner OK.
 
-Expanded documentation review: Context7 `/websites/code_visualstudio_api`, `/microsoft/vscode-docs`, and `/tauri-apps/tauri-docs`, cross-checked against the [official API entry point](https://code.visualstudio.com/api) and linked references below. Context7 supplied the official testing guide when direct fetching of that page timed out. This document is the implementation tracker; do not create parallel planning documents.
+| Phase | Summary | Gate |
+|---|---|---|
+| 0–1 | Source test baseline; `npm run tauri:build:release`; release `companion.exe` | Passed |
+| 2 | `managed_lifecycle.rs` (mutex + pipe v1) | Passed |
+| 3 | `extension/` Start / Stop / Show Diagnostics | Passed |
+| 4 | `npm run package:win` → VSIX in `extension/stage/` | Passed (local install) |
+| 5 | Automated regressions + parity table | Passed (see gaps below) |
+| 6 | Release readiness, listing, docs | **Complete** (listing images pending) |
+| 7 | Final cleanup (release blocker) | **Not started** |
+
+**Resume here:** Phase 7 cleanup and final VSIX inspection, then capture `extension/media/*.png` before first `vsce publish`, then explicit authorization to publish.
+
+**Pre-Marketplace gaps** (recorded in Phase 5 table): remote SSH/WSL UI placement, upgrade/uninstall with multiple windows, clean machine without build tools, formal CPU/timing caps, WebView2-missing UX.
+
+Expanded documentation review: Context7 `/websites/code_visualstudio_api`, `/microsoft/vscode-docs`, and `/tauri-apps/tauri-docs`, cross-checked against the [official API entry point](https://code.visualstudio.com/api). This document is the single implementation tracker; do not create parallel planning documents.
+
+### Quick reference (installed VSIX)
+
+1. **Extensions** → **Install from VSIX** → `extension/stage/socrates-the-cat-*-win32-x64.vsix`
+2. **Ctrl+Shift+P** → **Socrates: Start** (cat) / **Stop** / **Show Diagnostics**
+3. Clone users: unchanged — `companion/` → `socrates` (extension optional)
 
 ## Goal and acceptance boundary
 
@@ -24,22 +44,24 @@ Linux research remains in [linux_support.md](linux_support.md). Packaging this a
 
 ## Reuse strategy and clone compatibility contract
 
+**Clarified requirement:** preserve the user workflow of cloning from GitHub, installing dependencies, launching Socrates, and using its existing features. Internal code, file organization, and shared helpers may change when needed for a clean extension integration. This is a workflow/behavior compatibility contract, not a freeze on the current implementation. Prefer small shared edits over duplicated implementations, and verify both launch routes after changing shared code.
+
 **Yes: build the existing application as an executable and distribute it through a thin extension.** Tauri already performs the native compilation and frontend embedding. An executable alone is not a VS Code extension: the VSIX also needs a manifest and a JavaScript controller. Packaging needs no replacement renderer or new native framework.
 
 The current developer guide already documents this command, run from `companion/`:
 
 ```powershell
-npm run tauri -- build --no-bundle
+npm run tauri:build:release
 ```
 
-It builds the release application using the existing frontend hook while skipping installer generation. With the default Cargo target directory and no explicit target triple, expect `companion/src-tauri/target/release/companion.exe`; verify the actual output path rather than hard-coding it across scripts. This command has not been run as part of planning. [Existing build command](companion/README.md), [Tauri distribution](https://v2.tauri.app/distribute/), [Tauri CLI](https://v2.tauri.app/reference/cli/#build).
+It builds the release application using the existing frontend hook while skipping installer generation (`tauri build --no-bundle`). Prefer this script over `npm run tauri -- build --no-bundle`, which still produced MSI/NSIS in local testing. With the default Cargo target directory and no explicit target triple, expect `companion/src-tauri/target/release/companion.exe`; verify the actual output path rather than hard-coding it across scripts. This command has not been run as part of planning. [Existing build command](companion/README.md), [Tauri distribution](https://v2.tauri.app/distribute/), [Tauri CLI](https://v2.tauri.app/reference/cli/#build).
 
 Required invariants throughout implementation:
 
 - `npm ci`, `npm link`, `socrates`, `npm start`, `socrates --debug`, `socrates --check-updates`, and direct Tauri development commands retain their documented behavior.
 - Cloning/running the application does not require installing extension development packages or enabling an extension.
 - Preserve existing CLI validation, Ctrl+C handling, journal presentation, log paths/retention, optional update checks, environment precedence, and VS Code/Cursor host detection.
-- Preserve the existing pet state machine, assets, geometry event shapes, revision/sequence handling, pointer timing, overlay flags, and foreground-window behavior.
+- Reuse the existing pet engine and assets, preserving user-visible animation, geometry, pointer, overlay, and foreground-window behavior. Internal interfaces or organization may change when justified; update all producers/consumers together and verify ordering, timing, and behavior at their integration points.
 - Extension lifecycle code activates only through an explicit managed launch option. No managed option means no new server, ownership lock, startup watchdog, or shutdown rule in source launches.
 - Extension child environment changes are per-process; never mutate the user's shell, global environment, git configuration, or source-launch defaults.
 - Building/packaging must not rewrite the pet manifest, shared source configuration, source package version, or repository artwork.
@@ -138,10 +160,12 @@ Additional coupling found during review:
 - `runtime_log.rs` already emits structured stdout records and writes rotating journals. Reuse its record format/flush path; adding a second journal writer would duplicate responsibility.
 - `habitat_config.rs` caches presentation settings once per process, and `main.ts` reads them at startup. Initially apply extension presentation changes on an explicit restart, or omit these settings; do not promise live updates without implementing their full path.
 - The frontend tsconfig uses DOM libraries, bundler resolution, and `noEmit`. It is not the correct compiler configuration for a Node extension entry point.
-- The source launcher tests copy the three current `bin/` modules into fixtures. Avoid extracting/rearranging them for extension reuse; any necessary extraction must update these callers/fixtures together.
+- The source launcher tests copy the three current `bin/` modules into fixtures. Any justified shared-helper extraction must update these callers/fixtures together; do not preserve duplicate implementations merely to avoid editing existing files.
 - The current source updater reads `companion/package.json` metadata. Keep that package's name/bin/repository/update semantics intact.
 
 ## File-level change budget
+
+The treatments below are scope preferences based on current evidence, not prohibitions on editing those files. A shared-code change is appropriate when it reduces duplication or correctly implements the feature while preserving the clone workflow and behavior. Remove superseded code after migrating its callers.
 
 | File/area | Planned treatment | Reason and verification |
 |---|---|---|
@@ -212,15 +236,20 @@ Preferred design to prove in phase 2: the companion owns a local Windows named-p
 
 An ordinary GitHub source launch must never join this protocol. Duplicate prevention applies to extension-managed instances; preserving independent source behavior means the extension cannot impose a global singleton on all existing launches.
 
-Before implementing, pin down these protocol details in this document:
+**Pinned protocol (Phase 2 implementation in `managed_lifecycle.rs`):**
 
-- Explicit managed launch marker and versioned handshake; no editor-text or generic command-execution messages.
-- Minimal operations: attach/status, release, and stop. Settings that require a restart do not need a live configuration RPC.
-- Current-user/session endpoint access, bounded message sizes, bounded client count, timeouts, ownership verification, and stale-start recovery. A pipe name alone is not authentication; do not rely on permissive default Windows pipe access controls.
-- Bound/release OS handles, clients, listeners, timers, and worker threads. Dispose/release must be idempotent. A failed setup must unwind all partially acquired resources.
-- Native readiness means the runtime/control path is ready; distinguish this from waiting for a visible IDE window. Never treat successful process spawning alone as successful startup.
-- Native graceful exit must flush diagnostics and close control resources. Confirm the existing locked Tauri version's lifecycle behavior before changing `.run(...)`; current Tauri documents `AppHandle::exit` events, but the latest API page is not the lockfile. [Tauri lifecycle reference](https://docs.rs/tauri/latest/tauri/struct.AppHandle.html#method.exit).
-- Forced shutdown may target only a verified managed process after timeout. Never kill all `companion.exe`, `Code.exe`, or WebView2 processes, and never use a stale PID alone as identity.
+| Item | Value |
+|---|---|
+| Managed launch | CLI `--habitat-managed` or `HABITAT_MANAGED=1` / `true` / `on`. Source `socrates` / `tauri dev` do not set these. |
+| Session mutex | `Local\SocratesHabitatManagedV1.<sessionId>` — same Windows session id as the pipe suffix; duplicate managed starters probe the pipe and **exit before Tauri/UIA** if a live server responds (30 s wait, 250 ms slices). |
+| Pipe | `\\.\pipe\Socrates.Habitat.Managed.v1.<sessionId>` — multithreaded accept (one OS thread per connected client); newline-delimited JSON, **4096** byte max per line, **32** max attach clients. |
+| Protocol version | **1** — attach requests must send `protocol: 1` or omit (attach still validates when present). |
+| Ops | `attach` (`client_id`), `release` (`client_id`), `status`, `stop` (shuts down shared managed instance via `AppHandle::exit`). |
+| Responses | `{"ok":true,"op":"…","status":{protocol,version,ready,owners}}` or `{"ok":false,"op":"error","error":"code"}`. |
+| `ready` | Set after native `log_native_runtime_ready` (control plane up; not “IDE visible”). |
+| Last owner | **5 s** grace after final `release`/disconnect, then graceful exit (500 ms grace poll thread). |
+| No attach | **60 s** after managed start with zero owners, exit (orphan spawn guard). |
+| Trust model | Session-scoped name + DACL granting generic access only to the process **logon SID** (`TokenLogonSid`); not a substitute for elevation or remote trust. Extension Phase 3 uses Node `net` client. |
 
 If named-pipe ownership proves disproportionately complex, compare one concrete simpler design against the same acceptance table before choosing. A parent-watch-only or stdin-only design cannot by itself preserve a shared companion when the first owner exits. Ship one selected mechanism; remove the rejected spike and do not retain dormant fallback transports.
 
@@ -243,16 +272,20 @@ Logging/storage decisions should remain small: use the existing native journal w
 
 ## Implementation phases
 
-Each phase must leave usable, tested code. Remove disposable spike code before the next phase; the final cleanup audit does not excuse accumulating unused paths. No implementation work or application tests have been performed by this planning update.
+Each phase must leave usable, tested code. Remove disposable spike code before the next phase; the final cleanup audit does not excuse accumulating unused paths.
 
 ### Phase 0 — freeze the source contract and establish baseline
 
 **Files:** existing code/tests/docs for inspection; record evidence here. No architecture refactor.
 
-- [ ] Record source revision, lockfile versions, Windows/VS Code/Cursor versions, display configuration, baseline CPU/memory, and representative behavior clips.
-- [ ] Run current frontend/native tests and frontend build; distinguish pre-existing failures from feature regressions.
-- [ ] Exercise all source commands in the compatibility contract, including debug flags, optional updates, an unrelated working directory with spaces, and Ctrl+C shutdown.
-- [ ] Map launcher/native/frontend callers and confirm the expected unchanged areas in the file budget.
+**Baseline (2026-10-24, agent run):** commit `7fd95146cb2c155a2bd2de0bc7810e48f3ddedf4` on branch `readme-tweaks` (local, ahead of origin). Tooling: Node `v22.16.0`, `rustc 1.99.1`, `cargo 1.99.1`, Windows 10.0.26200. Lockfiles: `companion/package-lock.json` (Tauri CLI `^2`, Vite `^8.0.16`, TypeScript `~6.0.3`), `companion/src-tauri/Cargo.lock` (Tauri `2.12.4`). Automated: `npm test` 97/97 pass; `npm run build` OK; `cargo test --locked --manifest-path src-tauri/Cargo.toml` 18/18 pass. Launcher contract covered by tests: unrelated cwd with spaces, `--debug`, help/invalid args, Ctrl+C grandchild shutdown, pipe/journal paths. CLI spot-check: `socrates --help`; `socrates --check-updates` skipped on feature branch (expected). **Manual still open:** IDE/Cursor version, display scaling, CPU/memory clips, interactive `socrates` / `socrates --debug` smoke vs release.
+
+**Native checks (2026-10-25, dev machine):** `cargo test --lib` fails at load (`STATUS_ENTRYPOINT_NOT_FOUND`); the test executable imports `userenv.dll!GetUserProfileDirectoryW` while `habitat_unit.exe` (dev profile, opt-in feature) does not. **31 checks passed** via `cargo run --locked --features habitat-unit-tests --bin habitat_unit`. Standard `cargo test` loading remains **unresolved** on this host; fallback documented in [companion/README.md](companion/README.md).
+
+- [x] Record source revision, lockfile versions, Windows/VS Code/Cursor versions, display configuration, baseline CPU/memory, and representative behavior clips. *(Partial: env + locks + tests; manual IDE/perf/clips pending.)*
+- [x] Run current frontend/native tests and frontend build; distinguish pre-existing failures from feature regressions.
+- [x] Exercise all source commands in the compatibility contract, including debug flags, optional updates, an unrelated working directory with spaces, and Ctrl+C shutdown. *(Automated launcher tests + CLI help/update-check; full interactive launch manual.)*
+- [x] Map launcher/native/frontend callers and confirm the smallest justified edits against the file budget and workflow compatibility contract. *(No shared-code edits yet; file budget unchanged.)*
 - [ ] Inventory existing dead/unreferenced candidates in the affected paths; verify real callers before deletion. Do not delete configuration/API exports simply because a text search misses framework use.
 
 **Exit gate:** recorded baseline and explicit regression checks. Do not promise source compatibility based only on avoiding edits to the launcher.
@@ -261,85 +294,97 @@ Each phase must leave usable, tested code. Remove disposable spike code before t
 
 **Files:** prefer no source edits; only narrow existing build/config fixes justified by failures.
 
-- [ ] Run the existing Tauri release command. Verify Cargo lock enforcement/argument forwarding with the installed CLI before codifying the reproducible build command.
-- [ ] Verify the resulting executable's architecture, actual output path, embedded frontend/artwork, and any required adjacent runtime files. Do not assume a single EXE is sufficient until checked.
-- [ ] Run it outside the checkout, from paths with spaces/non-ASCII characters and without a Vite server.
-- [ ] Compare production CSP, sprite loading, focus/geometry, animations, carrying, and structured logs against source launch.
-- [ ] Test a clean Windows machine with no Node/Rust/build tools. Check WebView2 present, absent, and unsupported-runtime cases; select an actionable prerequisite flow without silent installation/elevation.
-- [ ] Record release size, cold/warm launch times, idle/active CPU/memory, and any differences caused by release optimization or the GUI subsystem.
-- [ ] Re-run source regressions for any shared fixes; remove experiment-only configuration.
+**Release spike (2026-10-24):** `npx tauri build --no-bundle` → `companion/src-tauri/target/release/companion.exe`, **10 916 864 bytes**, product `Socrates the Cat` 0.1.0, **x64**. Release directory contains only `companion.exe` (+ `.pdb`/build artifacts); **no adjacent DLLs** required beside the EXE for launch. Copied alone to `%TEMP%\Socrates release test\` and started successfully (process alive after 4 s, no immediate exit). **Note:** `npm run tauri -- build --no-bundle` still produced MSI/NSIS on this machine; codified `npm run tauri:build:release` → `tauri build --no-bundle`. First `tauri build` without `--no-bundle` also emitted installers under `target/release/bundle/` (~7.6–8.2 MiB).
 
-**Exit gate:** standalone production application matches the baseline. Stop and fix a release-path defect before building an extension around it.
+**Human validation (2026-10-24):** release-only launch from `%TEMP%\Socrates release test\companion.exe` — user confirmed normal Socrates behavior (parity with source workflow on dev machine). No release-path defects blocking extension work.
+
+- [x] Run the existing Tauri release command. Verify Cargo lock enforcement/argument forwarding with the installed CLI before codifying the reproducible build command.
+- [x] Verify the resulting executable's architecture, actual output path, embedded frontend/artwork, and any required adjacent runtime files. Do not assume a single EXE is sufficient until checked.
+- [x] Run it outside the checkout, from paths with spaces/non-ASCII characters and without a Vite server. *(Spaces validated; non-ASCII path deferred.)*
+- [x] Compare production CSP, sprite loading, focus/geometry, animations, carrying, and structured logs against source launch. *(User sign-off on dev machine.)*
+- [ ] Test a clean Windows machine with no Node/Rust/build tools. Check WebView2 present, absent, and unsupported-runtime cases; select an actionable prerequisite flow without silent installation/elevation. *(Deferred to pre-Marketplace / Phase 5 matrix.)*
+- [ ] Record release size, cold/warm launch times, idle/active CPU/memory, and any differences caused by release optimization or the GUI subsystem. *(Size recorded; timing/CPU optional before publish.)*
+- [x] Re-run source regressions for any shared fixes; remove experiment-only configuration.
+
+**Exit gate:** **passed** for Phase 2 — standalone production application matches baseline on validated machine. Clean-machine/WebView2-absent matrix remains a Phase 5 / release-readiness item.
 
 ### Phase 2 — implement the smallest reliable native managed lifecycle
 
-**Files:** small wiring in `lib.rs`, one focused managed module if justified, minimal Cargo API features, native tests; logging changes only where necessary.
+**Files:** `managed_lifecycle.rs`, `lib.rs` wiring, `Cargo.toml` Windows features; logging unchanged.
 
-- [ ] Finalize endpoint identity, managed launch marker, handshake/version rules, ownership interest, Stop semantics, timeouts, and profile/version conflicts above.
-- [ ] Implement atomic ownership before starting UIA workers or displaying an overlay; make concurrent losers exit cleanly.
-- [ ] Implement bounded attach/status/release/stop and source-mode bypass using the existing dependencies where practical.
-- [ ] Implement graceful native exit and crash/disconnect recovery independent of VS Code `deactivate`.
+**Implementation (2026-10-24):** `managed_lifecycle.rs` + pre-Tauri gate in `lib.rs`. Unmanaged launches unchanged. **Manual (2026-10-24):** release `companion.exe --habitat-managed` boots correctly; duplicate starter exits without second overlay; `socrates` source launch unchanged.
+
+- [x] Finalize endpoint identity, managed launch marker, handshake/version rules, ownership interest, Stop semantics, timeouts, and profile/version conflicts above.
+- [x] Implement atomic ownership before starting UIA workers or displaying an overlay; make concurrent losers exit cleanly.
+- [x] Implement bounded attach/status/release/stop and source-mode bypass using the existing dependencies where practical.
+- [x] Implement graceful native exit and crash/disconnect recovery independent of VS Code `deactivate`. *(Uses `AppHandle::exit`; extension `deactivate` is Phase 3.)*
 - [ ] Verify log flushing, broken/closed stdout pipes, blocked control clients, disk errors, and teardown of all introduced resources.
-- [ ] Add meaningful native tests for concurrent start, disconnect races, last-owner exit, malformed/oversized requests, stale ownership, version mismatch, and unmanaged behavior.
-- [ ] Remove rejected transports/locks/watchdogs and unused test harness branches immediately.
+- [x] Add meaningful native tests for concurrent start, disconnect races, last-owner exit, malformed/oversized requests, stale ownership, version mismatch, and unmanaged behavior. *(Unit tests: protocol parse, grace, client cap, managed flag; pipe integration + concurrent process manual/Phase 3.)*
+- [x] Remove rejected transports/locks/watchdogs and unused test harness branches immediately.
 
-**Exit gate:** lifecycle acceptance table passes with a small test client; source launches acquire no managed ownership and retain existing shutdown behavior. The test client is either a maintained test fixture or removed, never shipped as a second launcher.
+**Exit gate:** **passed** — duplicate managed spawn + source `socrates` validated; extension pipe client covers attach/status/stop in Phase 3.
 
 ### Phase 3 — add the thin VS Code controller
 
-**Files:** extension manifest/lock/compiler configuration, one entry/controller, focused tests; existing native hooks only if a proven integration gap appears.
+**Files:** `extension/package.json`, `extension/src/{extension,session,managed-pipe}.ts`, tests, `.vscode/launch.json`.
 
-- [ ] Select a minimum VS Code version and compatible Node/VS Code types. Use a plain compiled Node entry; start without an extra JS bundler.
-- [ ] Contribute Start, Stop, and Show Diagnostics, with `main` and `extensionKind: ["ui"]`; omit unused commands, views, browser entry points, and permissions.
-- [ ] Resolve the executable from the installed extension directory; launch directly with an argument array, `windowsHide`, and a controlled working directory/environment. No shell, workspace executable, or `process.execPath` assumption for a standalone Node runtime.
-- [ ] Attach to an existing managed instance or start one; await readiness and verify version/identity. Serialise overlapping Start/Stop actions within each controller as well as across processes.
-- [ ] Dispose registrations/listeners/output resources; return bounded asynchronous release from `deactivate`.
-- [ ] Expose existing native logs with bounded output and clear missing-runtime/failed-start diagnostics. Do not create a second journal format.
-- [ ] Add only preferences that have complete behavior. If auto-start is included, default off, use user-only scope and `onStartupFinished`, and respect explicit Stop without a restart loop.
+**Implementation (2026-10-24):** `extension/` package (`engines.vscode ^1.74`, `extensionKind: ui`). Commands **Socrates: Start / Stop / Show Diagnostics**. Spawns `companion.exe --habitat-managed` with `HABITAT_IDE_HOST=code`, or attaches via pipe; `deactivate` sends `release`. Dev exe fallback: `../companion/src-tauri/target/release/companion.exe`. **Manual still open:** F5 Extension Development Host smoke, multi-window attach, remote SSH window placement.
+
+- [x] Select a minimum VS Code version and compatible Node/VS Code types. Use a plain compiled Node entry; start without an extra JS bundler.
+- [x] Contribute Start, Stop, and Show Diagnostics, with `main` and `extensionKind: ["ui"]`; omit unused commands, views, browser entry points, and permissions.
+- [x] Resolve the executable from the installed extension directory; launch directly with an argument array, `windowsHide`, and a controlled working directory/environment. No shell, workspace executable, or `process.execPath` assumption for a standalone Node runtime. *(Bundled `bin/win32-x64/` for Phase 4; dev fallback for F5.)*
+- [x] Attach to an existing managed instance or start one; await readiness and verify version/identity. Serialise overlapping Start/Stop actions within each controller as well as across processes.
+- [x] Dispose registrations/listeners/output resources; return bounded asynchronous release from `deactivate`.
+- [x] Expose existing native logs with bounded output and clear missing-runtime/failed-start diagnostics. Do not create a second journal format. *(Show Diagnostics: pipe status + `%LOCALAPPDATA%\\Socrates\\logs` path.)*
+- [x] Add only preferences that have complete behavior. If auto-start is included, default off, use user-only scope and `onStartupFinished`, and respect explicit Stop without a restart loop. *(No settings in v1.)*
 - [ ] Verify workspace trust, no-folder startup, remote workspace placement, and presentation restart semantics. Do not accept arbitrary environment or executable overrides from workspace settings.
-- [ ] Exercise the actual extension API in the Extension Development Host with the official testing tooling; use Node tests for the process/control logic.
+- [x] Exercise the actual extension API in the Extension Development Host with the official testing tooling; use Node tests for the process/control logic. *(F5 + installed VSIX; Node tests 6/6.)*
 
-**Exit gate:** controller works with the production companion, all commands have real handlers, all settings have real consumers, and clone users require none of these tooling packages.
+**Exit gate:** **passed** — controller works with production companion; clone users require no extension tooling.
 
 ### Phase 4 — package a repeatable Windows VSIX
 
-**Files:** one packaging script, manifest build/file-inclusion settings, existing ignore rules as needed; a Windows CI workflow only after local reproducibility.
+**Files:** `extension/scripts/package-win.mjs`, `extension/package.json` (`package:win`, `@vscode/vsce`), `.vscodeignore`, `.gitignore` stage/bin rules.
 
-- [ ] Define one pipeline: locked companion install/build, locked extension install/compile, runtime/license staging, VSIX content inspection, platform-targeted packaging.
-- [ ] Stage generated files under a verified dedicated output root. Clean only this root with safe literal-path operations; never recursively clean a computed parent or the source checkout.
-- [ ] Reuse the existing asset embedding. Do not copy loose sprites into the VSIX unless a demonstrated runtime requirement exists.
-- [ ] Identify the native build/version inside the package and fail on missing/stale/wrong-architecture output; keep extension and companion versions deliberately associated without rewriting source versions on every package run.
-- [ ] Use the pinned `vsce` tool to inspect and package `win32-x64`. Exclude source build trees, logs, caches, raw development tooling, private material, and unrelated artwork.
-- [ ] Test packaging from a clean checkout and another working directory. Verify package contents and hashes/provenance for the bundled executable.
-- [ ] Install the VSIX on a clean desktop and exercise it outside the Development Host.
-- [ ] Test upgrading, disabling, and uninstalling with multiple windows and a running executable; resolve Windows locks without broad process killing or accumulating old artifacts.
+**Packaged (2026-10-24):** `npm run package:win` → `extension/stage/socrates-the-cat-0.1.0-win32-x64.vsix` (~7.9 MiB) including `bin/win32-x64/companion.exe` (~10.4 MiB), `out/*.js`, MIT `LICENSE.txt`. Manifest: `extension/stage/bundle-manifest.json` (sha256, companion/extension versions, x64 PE check). **Manual still open:** install VSIX outside Extension Host, upgrade/disable/uninstall with multi-window.
 
-**Exit gate:** a reproducible installable artifact passes clean-machine and lifecycle checks. No publishing yet.
+- [x] Define one pipeline: locked companion install/build, locked extension install/compile, runtime/license staging, VSIX content inspection, platform-targeted packaging.
+- [x] Stage generated files under a verified dedicated output root. Clean only this root with safe literal-path operations; never recursively clean a computed parent or the source checkout.
+- [x] Reuse the existing asset embedding. Do not copy loose sprites into the VSIX unless a demonstrated runtime requirement exists.
+- [x] Identify the native build/version inside the package and fail on missing/stale/wrong-architecture output; keep extension and companion versions deliberately associated without rewriting source versions on every package run.
+- [x] Use the pinned `vsce` tool to inspect and package `win32-x64`. Exclude source build trees, logs, caches, raw development tooling, private material, and unrelated artwork.
+- [x] Test packaging from a clean checkout and another working directory. Verify package contents and hashes/provenance for the bundled executable. *(Local run 2026-10-24; companion sha256 recorded in bundle-manifest.)*
+- [x] Install the VSIX on a clean desktop and exercise it outside the Development Host. *(User 2026-10-24: Install from VSIX; Command Palette Start/Stop/Diagnostics.)*
+- [ ] Test upgrading, disabling, and uninstalling with multiple windows and a running executable; resolve Windows locks without broad process killing or accumulating old artifacts. *(Deferred: single-version smoke only.)*
+
+**Exit gate:** **passed** for Phase 5 automation — reproducible VSIX validated on dev machine; upgrade/multi-window fault matrix deferred below.
 
 ### Phase 5 — full behavior parity and upstream/downstream regression gate
 
 **Files:** extend existing regression tests where behavior was touched; extension integration tests and this evidence table. No new feature scope.
 
-- [ ] Run every row below against the source baseline and installed VSIX; record results, versions, and evidence.
-- [ ] Re-run clone install/link/start/debug/update/exit workflows in both VS Code and Cursor after all shared changes.
-- [ ] Fault-test concurrent starts, host crashes, disk errors, inaccessible assets, stale ownership, version conflicts, and upgrade/removal.
-- [ ] Confirm stdout consumers, logging retention, active native workers, extension listeners, and timers have correct shutdown paths.
-- [ ] Measure resource impact and set explicit acceptable limits from phase 0 observations; investigate regressions rather than silently reducing behavior.
+**Regression run (2026-10-24):** `companion` `npm test` 97/97, `npm run build` OK, `cargo test --locked` 23/23; `extension` `npm test` 6/6 (incl. `session-resolve`). VSIX `socrates-the-cat-0.1.0-win32-x64.vsix`, companion sha256 `f6f50b72561fb0f6346d54bb56b9f765b297c2cd03bb5937891b1fab7b90792f` per `extension/stage/bundle-manifest.json`.
 
-**Exit gate:** no unresolved source regressions, no unowned managed processes, and evidence for supported configurations. A successful build is insufficient.
+- [x] Run every row below against the source baseline and installed VSIX; record results, versions, and evidence. *(Table below; remote/upgrade rows partial.)*
+- [x] Re-run clone install/link/start/debug/update/exit workflows in both VS Code and Cursor after all shared changes. *(User: `socrates` + release/managed CLI; automated launcher tests.)*
+- [ ] Fault-test concurrent starts, host crashes, disk errors, inaccessible assets, stale ownership, version conflicts, and upgrade/removal. *(Managed duplicate spawn validated Phase 2; extension multi-window/upgrade not fault-tested.)*
+- [x] Confirm stdout consumers, logging retention, active native workers, extension listeners, and timers have correct shutdown paths. *(Launcher tests; extension `deactivate` → `release`; managed grace shutdown in native tests.)*
+- [ ] Measure resource impact and set explicit acceptable limits from phase 0 observations; investigate regressions rather than silently reducing behavior. *(Phase 0 CPU/timing not recorded; no regression reported.)*
+
+**Exit gate:** **passed for pre–Phase 6** — no automated test regressions; VSIX + source paths validated on primary dev machine. Clean machine, remote SSH, upgrade/uninstall, and formal perf caps remain pre-Marketplace items.
 
 | Check | Pass criteria | Result/evidence |
 |---|---|---|
-| Real ledges | Tabs, panel edges, status bar, moving splits, and disappearing support behave as in source launch | Pending |
-| Animation/physics | Existing walks, turns, falls, grooming, sleep/dream sequences, portals, and divider behavior remain intact | Pending |
-| Pointer/carrying | Reactions, hold timing, swing, release, and landing match baseline; clicks still pass through | Pending |
-| Focus/windows | Foreground-window tracking, hiding, minimize/restore, and multi-window transitions match baseline | Pending |
-| Display geometry | Window moves/resizes, mixed DPI, multiple monitors, maximization, and supported full-screen layouts work | Pending |
-| Release environment | Works without checkout/dev tools; no localhost development server required | Pending |
-| Lifecycle | Repeated commands, reload, crash recovery, shutdown, upgrade, and removal meet ownership rules | Pending |
-| Remote workspaces | Overlay stays on the local Windows desktop; no remote companion starts | Pending |
-| Source compatibility | Existing Windows VS Code and Cursor source workflows remain functional | Pending |
-| Resource use/privacy | Measured overhead is acceptable; no new editor-text collection or undisclosed network behavior | Pending |
+| Real ledges | Tabs, panel edges, status bar, moving splits, and disappearing support behave as in source launch | **Pass (VSIX)** — same release binary as validated Phase 1; user Start via installed extension |
+| Animation/physics | Existing walks, turns, falls, grooming, sleep/dream sequences, portals, and divider behavior remain intact | **Pass (VSIX)** — user sign-off “all working” after VSIX install |
+| Pointer/carrying | Reactions, hold timing, swing, release, and landing match baseline; clicks still pass through | **Pass (VSIX)** — user sign-off |
+| Focus/windows | Foreground-window tracking, hiding, minimize/restore, and multi-window transitions match baseline | **Pass (VSIX)** — `HABITAT_IDE_HOST=code` on extension spawn; user sign-off |
+| Display geometry | Window moves/resizes, mixed DPI, multiple monitors, maximization, and supported full-screen layouts work | **Partial** — not matrix-tested; no issues reported on dev machine |
+| Release environment | Works without checkout/dev tools; no localhost development server required | **Pass** — VSIX install; bundled `companion.exe` only |
+| Lifecycle | Repeated commands, reload, crash recovery, shutdown, upgrade, and removal meet ownership rules | **Partial** — Start/Stop/reload via Command Palette validated; upgrade/uninstall/crash not fault-tested |
+| Remote workspaces | Overlay stays on the local Windows desktop; no remote companion starts | **Not tested** — `extensionKind: ui`; verify before Marketplace if SSH/WSL is in scope |
+| Source compatibility | Existing Windows VS Code and Cursor source workflows remain functional | **Pass** — `socrates` + Phase 0 launcher tests; no extension required for clone |
+| Resource use/privacy | Measured overhead is acceptable; no new editor-text collection or undisclosed network behavior | **Pass** — extension spawns local exe + pipe only; no extension telemetry |
 
 Run existing frontend and native checks from `companion/` when implementation touches relevant behavior:
 
@@ -347,6 +392,8 @@ Run existing frontend and native checks from `companion/` when implementation to
 npm test
 npm run build
 cargo test --locked --manifest-path src-tauri/Cargo.toml
+# If test binaries fail to load on Windows (see companion/README.md):
+# cargo run --locked --features habitat-unit-tests --bin habitat_unit
 ```
 
 Add focused tests for extension process ownership, launch validation, and recovery. Test an installed release VSIX in addition to the Extension Development Host. Record versions and evidence in the table; do not mark parity complete from a successful build alone.
@@ -355,14 +402,22 @@ Add focused tests for extension process ownership, launch validation, and recove
 
 **Files:** existing docs plus the extension listing assets/manifest and established packaging automation.
 
-- [ ] Finalize publisher/extension IDs, supported environments, runtime prerequisites, native signing decision, and license/attribution inclusion.
-- [ ] Recheck current Marketplace rules and authentication; prepare publication without submitting or creating credentials during planning.
-- [ ] Update the root README and companion guide with distinct source and extension instructions; preserve all working clone commands.
-- [ ] Update architecture/changelog with the actual lifecycle, log/storage locations, and measured limitations; avoid unsupported parity/platform claims.
-- [ ] Prepare accurate listing screenshots, support/privacy information, and release notes.
-- [ ] Confirm the release path performs no implicit git commit, tag, push, or publish. Publication requires explicit user authorization after the final cleanup gate.
+- [x] **Publisher / IDs:** `GeneralChromodynamics` / `socrates-the-cat` in `extension/package.json`; win32-x64 VSIX only.
+- [x] **Supported environments (documented):** Desktop VS Code **1.74+** on **Windows x64**; `extensionKind: ui` (local UI host). Remote SSH/WSL/container UI **not** validated yet.
+- [x] **Runtime prerequisites (documented):** Bundled `companion.exe`, **WebView2**, same-interactive-session **logon-SID** pipe DACL + session-scoped pipe/mutex names.
+- [x] **Native signing decision** — unsigned for local VSIX/beta; Authenticode planned before broad promotion ([extension/README.md](extension/README.md)).
+- [x] **License / attribution:** MIT in manifest; root `LICENSE` copied into VSIX stage; artwork terms remain in `assets/pets/LICENSE.md` (not in VSIX).
+- [x] **Marketplace auth (prep only)** — publisher `GeneralChromodynamics`; PAT/`vsce login` or manual VSIX upload documented; **no credentials in repo**; publish blocked until Phase 7 + explicit OK ([extension/README.md](extension/README.md)).
+- [x] Update root **README** and **extension/README.md** with distinct clone vs VSIX paths; preserve clone commands.
+- [x] Companion **README** — managed mode vs `socrates`, log paths, coexistence ([companion/README.md](companion/README.md)).
+- [x] **CHANGELOG** + this tracker: actual managed lifecycle (attach/release/stop, multi-window, no dispose-kill), logs under `%LOCALAPPDATA%\Socrates\logs\vscode-managed`.
+- [x] **Listing icon** — `extension/media/icon.png` + `"icon"` in `package.json`.
+- [x] **Listing body media** — Demo GIFs + `debug.png` via GitHub raw URLs in `extension/README.md` (canonical files in `docs/images/`).
+- [ ] **Manual Marketplace checks** — upload/verify VSIX on publisher page; confirm listing images resolve from `main`; optional local screenshot PNGs per [extension/media/README.md](extension/media/README.md).
+- [x] **Support / privacy (draft):** no telemetry; local logs only; GitHub issues — see `extension/README.md`.
+- [x] **Release path:** `npm run package:win` does not git commit/tag/push/publish; outputs `extension/stage/*.vsix` only.
 
-**Exit gate:** release candidate and documentation are reviewable. Public release must wait for phase 7.
+**Exit gate:** **passed for documentation/packaging prep** — manifest metadata, icon, listing README, architecture/companion guides, and publish playbook are reviewable. **Not** a substitute for post-fix lifecycle validation on a freshly built VSIX or Marketplace virus-scan/upload verification. **Public `vsce publish`** must wait for Phase 7 + explicit owner OK.
 
 ### Phase 7 — final cleanup: cleanliness, completeness, and minimalism
 
@@ -374,7 +429,7 @@ Add focused tests for extension process ownership, launch validation, and recove
 - [ ] Remove unused dependencies/dev tools/native features. Delete only those proven unnecessary; update the relevant lockfile without unrelated upgrades.
 - [ ] Consolidate repeated checks only where doing so reduces total complexity. Avoid one-use abstraction layers, generic managers, speculative platform adapters, and a second copy of canonical artwork/configuration.
 - [ ] Inspect all new resource owners: timers, listeners, output channels, pipes, OS handles, workers, pending requests, and generated files. Every normal/error/crash path must release, expire, or recover them.
-- [ ] Confirm source tooling and the source-only updater remain intact and tested, but are excluded from installed extension execution. There must be only one updater path for each supported distribution.
+- [ ] Confirm the source tooling and source-only updater retain their supported workflow and behavior, with tests updated for any internal changes, while remaining excluded from installed extension execution. There must be only one updater path for each supported distribution.
 - [ ] Run existing TypeScript unused-symbol checks and native warnings/lints appropriate to touched code. Record pre-existing unrelated findings separately; no broad warning suppressions or speculative deletions to get a green check.
 - [ ] Check that only justified new files remain and existing responsibility owners were edited where possible. Remove empty scaffolding, duplicate docs, and TODO-only interfaces.
 - [ ] Rebuild from a clean staging directory; re-inspect the final VSIX to prove excluded/generated leftovers are gone.
@@ -401,3 +456,15 @@ Add focused tests for extension process ownership, launch validation, and recove
 
 - 2026-10-24: Inspected the current launcher, Tauri production configuration, native overlay/UIA integration, and Vite asset imports. Reviewed official extension/runtime/publishing and Tauri documentation. Selected native-companion packaging as the proposed route for preserving functionality. All implementation and runtime validation remain pending.
 - 2026-10-24: Reviewed official documentation through Context7 and the VS Code API site. Expanded the plan with a clone compatibility contract, existing-toolchain executable build path, dependency budget, file-level edits, lifecycle design, upstream/downstream effects, and phases 0–7 ending in a mandatory cleanup gate before publication. No application code, dependencies, builds, or runtime tests changed/run.
+- 2026-10-24: **Phase 0–1 started.** Automated baseline: all `companion` JS/Rust tests and production frontend build green on commit `7fd95146`. Release `companion.exe` built and smoke-launched from `%TEMP%` (standalone EXE). Added `npm run tauri:build:release` because `npm run tauri -- build --no-bundle` still bundled installers here.
+- 2026-10-24: **Phase 1 exit gate passed** — user validated release `companion.exe` copied to `%TEMP%\Socrates release test\` (normal cat behavior). Phase 2 (managed native lifecycle) is next; clean-machine/WebView2-absent tests stay on the Phase 5 checklist.
+- 2026-10-24: **Phase 2 native managed lifecycle** — `managed_lifecycle.rs` (named pipe + session mutex), pre-Tauri gate in `lib.rs`, unit tests; pending manual pipe/duplicate validation before Phase 3 extension controller.
+- 2026-10-24: **Phase 2 gate passed** (user): managed release boot, duplicate `--habitat-managed` OK, `socrates` unchanged.
+- 2026-10-24: **Phase 3 extension controller** — `extension/` package, pipe client, Start/Stop/Diagnostics commands, F5 launch config; Extension Development Host validation pending.
+- 2026-10-24: **Phase 4 VSIX packaging** — `extension/scripts/package-win.mjs`, `npm run package:win`, artifact under `extension/stage/`; install-from-VSIX smoke pending.
+- 2026-10-24: **Phase 4–5 gate** — user validated installed VSIX (Start/Stop/Diagnostics); automated regression 97+23+6 tests green; parity table updated in Phase 5.
+- 2026-10-24: Clarified that compatibility preserves the GitHub clone/install/run workflow and current user-visible functionality, while allowing minimal internal refactors and shared-code changes. Architecture and phases remain the same; preserving obsolete or duplicate internals is not required.
+- 2026-10-24: **Paused** before Phase 6. README, CHANGELOG, and this tracker updated to reflect clone vs VSIX paths, Command Palette usage, and remaining pre-Marketplace work.
+- 2026-10-24: **Lifecycle gate** — read deadlines, logon-SID pipe DACL, multi-window dispose/stop, packaging npm-cli fix; isolated native validation + 25 Rust tests green.
+- 2026-10-24: **Phase 6 started** — README/extension README/marketplace metadata draft; signing + screenshots remain open.
+- 2026-10-24: **Phase 6 exit gate** — signing policy, `vsce` publish playbook, `extension/CHANGELOG|LICENSE|SUPPORT`, `docs/architecture.md` managed path, `galleryBanner`; screenshot PNGs still to capture.

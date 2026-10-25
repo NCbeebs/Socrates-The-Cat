@@ -114,8 +114,8 @@ pub fn presentation() -> &'static HabitatPresentation {
     presentation_slot()
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, feature = "habitat-unit-tests"))]
+mod unit_tests {
     use super::*;
     use std::sync::Mutex;
 
@@ -136,8 +136,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn defaults_off_without_env_or_cli() {
+    pub(super) fn defaults_off_without_env_or_cli() {
         with_env(
             &[
                 ("HABITAT_DEBUG", None),
@@ -154,8 +153,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn debug_log_without_overlay_flags() {
+    pub(super) fn debug_log_without_overlay_flags() {
         with_env(
             &[
                 ("HABITAT_DEBUG", None),
@@ -172,8 +170,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn umbrella_env_enables_both() {
+    pub(super) fn umbrella_env_enables_both() {
         with_env(
             &[
                 ("HABITAT_DEBUG", Some("1")),
@@ -189,8 +186,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn subflag_can_disable_under_umbrella() {
+    pub(super) fn subflag_can_disable_under_umbrella() {
         with_env(
             &[
                 ("HABITAT_DEBUG", Some("1")),
@@ -205,8 +201,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn surfaces_only_without_umbrella() {
+    pub(super) fn surfaces_only_without_umbrella() {
         with_env(
             &[
                 ("HABITAT_DEBUG", None),
@@ -220,4 +215,43 @@ mod tests {
             },
         );
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unit_tests;
+
+    #[test]
+    fn defaults_off_without_env_or_cli() {
+        unit_tests::defaults_off_without_env_or_cli();
+    }
+
+    #[test]
+    fn debug_log_without_overlay_flags() {
+        unit_tests::debug_log_without_overlay_flags();
+    }
+
+    #[test]
+    fn umbrella_env_enables_both() {
+        unit_tests::umbrella_env_enables_both();
+    }
+
+    #[test]
+    fn subflag_can_disable_under_umbrella() {
+        unit_tests::subflag_can_disable_under_umbrella();
+    }
+
+    #[test]
+    fn surfaces_only_without_umbrella() {
+        unit_tests::surfaces_only_without_umbrella();
+    }
+}
+
+#[cfg(feature = "habitat-unit-tests")]
+pub(crate) fn run_unit_tests() {
+    unit_tests::defaults_off_without_env_or_cli();
+    unit_tests::debug_log_without_overlay_flags();
+    unit_tests::umbrella_env_enables_both();
+    unit_tests::subflag_can_disable_under_umbrella();
+    unit_tests::surfaces_only_without_umbrella();
 }

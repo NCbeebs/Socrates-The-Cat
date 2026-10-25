@@ -4,7 +4,29 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ## Unreleased
 
-- Expand [vsc-ext.md](vsc-ext.md) with Context7/official-documentation research, an unchanged GitHub clone workflow contract, executable/tooling reuse, file/dependency budgets, upstream/downstream lifecycle analysis, and detailed phases ending in mandatory cleanup before publication. Planning only; no extension or runtime changes.
+- **Pointer reach hint** — In normal pet mode (no `--debug`), a red overlay dot appears when the cursor is inside the same reach box used for swipe, pounce, and pick-up. Debug mode still adds the yellow reach outline and full pointer diagnostics.
+
+### VS Code extension (Windows desktop; not on Marketplace yet)
+
+Work is tracked in [vsc-ext.md](vsc-ext.md). **Phase 6 prep complete** (Marketplace upload/PAT verification pending); **Phase 7** before public `vsce publish`.
+
+- **Native tests (2026-10-25)** — Standard `#[test]` discovery restored; optional `habitat-unit-tests` feature + `habitat_unit` binary bypass a **local** loader failure (`cargo test` executable imports `userenv.dll`; exact cause unresolved). **31 checks** passed via fallback runner; `cargo test --lib` still fails at load on this machine.
+- **Fallback revision review** — fallback reverified (`31 checks`); opt-in feature and original crate types confirmed. Standard test compilation currently fails with 31 `E0433` errors: wrapper modules import assertion functions with `::*` but call them through the unimported module names. Correct those five imports before rechecking the separate loader issue; no implementation changes were made in this review.
+- **Phase 6 cleanup** — `TOKEN_GROUPS` via `read_unaligned`; publisher ID `GeneralChromodynamics` aligned in tracker/docs; extension icon + listing demo URLs; artwork licensing note in `extension/README.md`; pin `@types/vscode` to 1.74.0; `package:win` relies on `vscode:prepublish` compile only; exclude `media/README.md` from VSIX; added managed lifecycle + `exchangeOne` regression tests.
+- **Pre-release scan (2026-10-24)** — companion/Rust/extension test baseline before latest lifecycle fixes; cross-logon denial and rebuilt-VSIX lifecycle validation remain manual gates.
+
+- **Managed lifecycle fixes** — single `request_managed_shutdown` path (Stop exits companion); concurrent per-client pipe threads; session-scoped pipe/mutex names; 60 s initial-attach deadline; bounded reads and stricter status validation; non-blocking teardown on `RunEvent::ExitRequested`. Extension: no controller-side orphan kill (native deadline only); Start abort at enqueue time + `disposed` gate; attached socket error/close handlers; exchange rejects on pipe close. Native: non-blocking `pipe_peek` (`BufReader::buffer` + `PeekNamedPipe`); logon-SID DACL on `CreateNamedPipeW`; `OwnedToken` + `TOKEN_GROUPS` for logon SID; release bound to connection; connection caps.
+- **Phase 6** — Extension `README`, `CHANGELOG`, `LICENSE`, `SUPPORT`, `galleryBanner`, signing policy, `vsce` publish playbook; `docs/architecture.md` + `companion/README.md` managed mode; `extension/media/README.md` screenshot spec; root README layout. Marketplace PNGs not committed yet.
+- **Packaging** — `package:win` rebuilds companion by default; `package:win:fast` skips native build; npm/vsce invoked via `node …/npm-cli.js` and `node …/vsce` (no `shell: true`, paths with spaces safe).
+- **`extension/`** — UI extension (VS Code 1.74+, `extensionKind: ui`): Command Palette commands **Socrates: Start**, **Stop**, and **Show Diagnostics**; spawns bundled `companion.exe` with `HABITAT_IDE_HOST=code` or attaches via managed pipe. F5 launch: `.vscode/launch.json`.
+- **Packaging** — `npm run package:win` (rebuilds native) / `package:win:fast` in `extension/` → `extension/stage/*.vsix` and `bundle-manifest.json` (companion sha256 and versions).
+- **Native managed lifecycle** — `managed_lifecycle.rs`: `--habitat-managed`, session-scoped mutex/pipe `…Managed.v1.<sessionId>` (protocol v1: attach / release / status / stop). Source `socrates` / `tauri dev` unchanged.
+- **Companion release build** — `npm run tauri:build:release` in `companion/` (`tauri build --no-bundle`).
+- **Regression (Phase 5)** — `companion` tests 97 + Rust 23 + `extension` tests 6; installed VSIX validated on a dev machine (see parity table in `vsc-ext.md`).
+
+### Planning and other
+
+- Expand [vsc-ext.md](vsc-ext.md) with official API research, clone compatibility contract, phased implementation plan (0–7), and parity evidence table.
 - Document Arch Linux/CachyOS compatibility research and a staged Linux implementation plan in [linux_support.md](linux_support.md), including X11/Wayland boundaries, Windows regression gates, and final cleanup; runtime support remains Windows-only.
 - Verify expired naps finish segmented dream/rest loops and outro before waking, with regression coverage for all four dream/rest clips and immediate waking without segmented playback.
 - Art review: keep the cat's eyes closed in frames 2-11 of `Socs-snoozing.png`, using frame 1's eye regions in the open Pixelorama working canvas; other pixels and frames are unchanged (not yet saved or exported).
@@ -35,5 +57,7 @@ Notable user-facing changes. This project is an unreleased source preview.
 - Connection timing diagnostics currently bypass the debug-log setting, and failed connection attempts omit elapsed time.
 - After a tracked IDE window change, bottom-of-window fall recovery can still snap the cat upward to a higher status bar; preventing cross-window attachment rebinding does not eliminate this separate jump.
 - Pickup uses 50 ms pointer polling and the reach box, not per-pixel hit tests; a press that starts outside the box can register as inside between samples. Dragging can still move the caret or select editor text under the overlay.
-- Windows only; installation requires a source checkout and the Node/Rust build toolchains. No published installer or IDE extension.
+- Windows only. **Clone install** still requires a checkout and Node/Rust build toolchains. **Extension install** uses a prebuilt `companion.exe` inside the VSIX (WebView2 still required); build the VSIX from source as documented in the README. Not published to the VS Code Marketplace yet.
+- Extension: no auto-start on VS Code launch in v1; use **Socrates: Start**. Remote SSH/WSL window placement, upgrade/uninstall torture tests, and clean-machine validation are not complete pre-Marketplace (see `vsc-ext.md`).
+- Managed extension instances do not stop a separately launched `socrates` from a clone; duplicate prevention applies only among extension-managed starts.
 - Broader VS Code layout testing is still needed. A previously reported startup animation pause has a fallback in place, but its effectiveness across cold starts remains unconfirmed.

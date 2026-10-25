@@ -686,8 +686,8 @@ mod imp {
         }
     }
 
-    #[cfg(test)]
-    mod heuristic_tests {
+    #[cfg(any(test, feature = "habitat-unit-tests"))]
+    pub(super) mod heuristic_unit_tests {
         use super::{
             is_horizontal_panel_sash, is_vertical_wall_node, monaco_sash_kind, sash_cache_flags,
             sash_h, sash_w, score_editor_tab_strip, score_window_status_bar, MonacoSashKind,
@@ -715,15 +715,13 @@ mod imp {
             }
         }
 
-        #[test]
-        fn sash_thickness_includes_vscode_default() {
+        pub(super) fn sash_thickness_includes_vscode_default() {
             assert!(sash_w(4.0));
             assert!(sash_h(4.0));
             assert!(sash_w(8.0));
         }
 
-        #[test]
-        fn editor_tab_beats_activity_bar_tab() {
+        pub(super) fn editor_tab_beats_activity_bar_tab() {
             let editor = score_editor_tab_strip(&tab_node(800.0, 36.0), None);
             let activity = score_editor_tab_strip(&tab_node(48.0, 600.0), None);
             assert!(editor > 0.0);
@@ -731,8 +729,7 @@ mod imp {
             assert!(editor > activity);
         }
 
-        #[test]
-        fn editor_tabs_container_beats_terminal_tabs() {
+        pub(super) fn editor_tabs_container_beats_terminal_tabs() {
             let editor = score_editor_tab_strip(&tab_node(400.0, 35.0), Some("tabs-container"));
             let terminal =
                 score_editor_tab_strip(&tab_node(900.0, 35.0), Some("terminal-tabs-container"));
@@ -740,8 +737,7 @@ mod imp {
             assert!(terminal < 0.0);
         }
 
-        #[test]
-        fn monaco_semantic_sash_accepts_nonstandard_thickness() {
+        pub(super) fn monaco_semantic_sash_accepts_nonstandard_thickness() {
             assert_eq!(
                 monaco_sash_kind("monaco-sash vertical"),
                 MonacoSashKind::Active(super::MonacoSashOrientation::Vertical)
@@ -756,8 +752,7 @@ mod imp {
             assert!(is_horizontal_panel_sash(&wide, 1200.0, true));
         }
 
-        #[test]
-        fn window_status_bar_beats_mid_window_status_bar() {
+        pub(super) fn window_status_bar_beats_mid_window_status_bar() {
             let status = |x: f64, y: f64, w: f64, h: f64| UiaNode {
                 control_type: ControlType::StatusBar,
                 x,
@@ -772,8 +767,7 @@ mod imp {
             assert!(score_window_status_bar(&tab_node(2576.0, 37.0), client_w, client_h).is_none());
         }
 
-        #[test]
-        fn disabled_monaco_sash_skips_generic_group_match() {
+        pub(super) fn disabled_monaco_sash_skips_generic_group_match() {
             let disabled = sash_node(4.0, 800.0);
             let (h, v) = sash_cache_flags(
                 &disabled,
@@ -785,7 +779,56 @@ mod imp {
             let (_, v_generic) = sash_cache_flags(&disabled, None, 1200.0, 900.0);
             assert!(v_generic);
         }
+
+        pub(crate) fn run_all() {
+            sash_thickness_includes_vscode_default();
+            editor_tab_beats_activity_bar_tab();
+            editor_tabs_container_beats_terminal_tabs();
+            monaco_semantic_sash_accepts_nonstandard_thickness();
+            window_status_bar_beats_mid_window_status_bar();
+            disabled_monaco_sash_skips_generic_group_match();
+        }
     }
+
+    #[cfg(test)]
+    mod heuristic_tests {
+        use super::heuristic_unit_tests;
+
+        #[test]
+        fn sash_thickness_includes_vscode_default() {
+            heuristic_unit_tests::sash_thickness_includes_vscode_default();
+        }
+
+        #[test]
+        fn editor_tab_beats_activity_bar_tab() {
+            heuristic_unit_tests::editor_tab_beats_activity_bar_tab();
+        }
+
+        #[test]
+        fn editor_tabs_container_beats_terminal_tabs() {
+            heuristic_unit_tests::editor_tabs_container_beats_terminal_tabs();
+        }
+
+        #[test]
+        fn monaco_semantic_sash_accepts_nonstandard_thickness() {
+            heuristic_unit_tests::monaco_semantic_sash_accepts_nonstandard_thickness();
+        }
+
+        #[test]
+        fn window_status_bar_beats_mid_window_status_bar() {
+            heuristic_unit_tests::window_status_bar_beats_mid_window_status_bar();
+        }
+
+        #[test]
+        fn disabled_monaco_sash_skips_generic_group_match() {
+            heuristic_unit_tests::disabled_monaco_sash_skips_generic_group_match();
+        }
+    }
+}
+
+#[cfg(all(windows, feature = "habitat-unit-tests"))]
+pub(crate) fn run_unit_tests() {
+    imp::heuristic_unit_tests::run_all();
 }
 
 #[cfg(windows)]
