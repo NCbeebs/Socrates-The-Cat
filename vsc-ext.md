@@ -14,7 +14,7 @@
 
 **Resume here:** Install the rebuilt VSIX identified in Phase 7 and complete the remaining manual runtime/release checks. Resolve or explicitly disposition the standard Rust loader failure and packaging-tool advisory before publication authorization. Existing listing GIFs still need verification from `main`; additional local screenshots are optional.
 
-**Pre-Marketplace gaps** (recorded in Phase 5 table): remote SSH/WSL UI placement, upgrade/uninstall with multiple windows, clean machine without build tools, formal CPU/timing caps, WebView2-missing UX.
+**Pre-Marketplace gaps** (recorded in Phase 5 table): remote SSH/WSL UI placement, upgrade/uninstall with multiple windows, clean machine without build tools, formal CPU/timing caps, WebView2-missing UX, **extension developer debug parity** (HUD/wireframes/journal vs clone `socrates --debug` — planned below).
 
 Expanded documentation review: Context7 `/websites/code_visualstudio_api`, `/microsoft/vscode-docs`, and `/tauri-apps/tauri-docs`, cross-checked against the [official API entry point](https://code.visualstudio.com/api). This document is the single implementation tracker; do not create parallel planning documents.
 
@@ -67,7 +67,144 @@ Required invariants throughout implementation:
 - Building/packaging must not rewrite the pet manifest, shared source configuration, source package version, or repository artwork.
 - Source tooling is supported code, not legacy merely because it is excluded from a VSIX. Keep it tested and reachable. Remove obsolete implementation paths only after their callers are migrated and both supported launch routes pass.
 
-Functional equivalence means matching user-visible behavior on equivalent Windows/IDE configurations. The source workflow still builds through Vite/Cargo; an installed extension uses prebuilt output. Installation, activation, and diagnostics presentation can differ without changing the cat's behavior.
+Functional equivalence means matching user-visible behavior on equivalent Windows/IDE configurations. The source workflow still builds through Vite/Cargo; an installed extension uses prebuilt output. Installation, activation, and **extension orchestration diagnostics** can differ without changing the cat's behavior. **Developer debug presentation** (HUD, ledge wireframes, pointer reach box) is intentionally out of scope for Phase 3 v1 but is a documented follow-on so contributors are not forced to choose between the VSIX and `socrates --debug`.
+
+## Extension developer debug parity (planned)
+
+**Status:** Implemented in extension **0.1.2** (2026-10-25). **Show Diagnostics ≠ clone terminal debug** (still true — no Cargo/Vite journal). Today the extension only exposes pipe attach state and paths (`extension/src/extension.ts`); managed spawn uses `companion.exe --habitat-managed` with `stdio: "ignore"` and does not set `HABITAT_DEBUG*` (`extension/src/session.ts`). Clone `socrates --debug` sets `HABITAT_DEBUG=1` and `HABITAT_DEBUG_LOG=1` and pipes child stdout for a live terminal journal (`companion/bin/socrates.js`). The native overlay flags are resolved once at process start (`companion/src-tauri/src/habitat_config.rs` → `get_habitat_presentation` in the WebView).
+
+### What “parity” should mean (tiered)
+
+| Tier | Clone `socrates --debug` | Extension today | Extension target |
+|---|---|---|---|
+| **A — Overlay** | HUD, surface outlines, yellow reach box | Off (pet mode); red reach dot only in normal presentation | User-controlled on managed Start |
+| **B — Structured diagnostics** | `debug` records in terminal journal | Written under `%LOCALAPPDATA%\Socrates\logs\vscode-managed` if enabled, but not surfaced in VS Code | Optional tail into **Socrates** output channel |
+| **C — Raw dev tool output** | Cargo/Vite lines when launcher runs `tauri dev` | N/A (release `companion.exe` only) | **Non-goal** for VSIX; keep clone/Tauri dev paths |
+
+Tier **A** is the minimum meaningful parity for layout debugging. Tier **B** closes the gap between “debug exists on disk” and “I can see it while using the extension.” Tier **C** stays source-only.
+
+### UX proposal (VS Code)
+
+Prefer **user-scoped settings** with `scope: "application"` ([configuration scope](https://code.visualstudio.com/api/references/contribution-points#scope)) plus clear restart semantics.
+
+**Setting IDs (no prefix conflicts):** A setting ID cannot be a complete prefix of another ([`contributes.configuration`](https://code.visualstudio.com/api/references/contribution-points#contributes.configuration)). Do **not** use both `socrates.debug` and `socrates.debug.*`. Use **leaf** keys only:
+
+| Setting ID | Type | Default | Purpose |
+|---|---|---|---|
+| `socrates.debug.enabled` | `boolean` | `false` | Umbrella: `--debug` argv + `HABITAT_DEBUG=1` on the **next** spawn this window initiates |
+| `socrates.debug.surfaces` | `boolean` \| `null` | `null` | When non-null, explicit `HABITAT_DEBUG_SURFACES`; when `null`, inherit from `enabled` |
+| `socrates.debug.hud` | `boolean` \| `null` | `null` | When non-null, explicit `HABITAT_DEBUG_HUD`; when `null`, inherit from `enabled` |
+| `socrates.debug.streamJournal` | `boolean` \| `null` | `null` | Tier B: extension tails JSONL into the output channel when effective; when `null`, inherit from `enabled` |
+
+**Resolution (extension → spawn):**
+
+```text
+effectiveSurfaces      = surfaces ?? enabled
+effectiveHud           = hud ?? enabled
+effectiveStreamJournal = streamJournal ?? enabled
+effectiveDebugLog      = enabled || effectiveStreamJournal
+```
+
+- **`HABITAT_DEBUG_LOG`:** set to `1` when `effectiveDebugLog` is true, else `0` (after scrub). Native structured `debug` records in `journal-*.jsonl` follow this flag (`habitat_config.rs` / `debug_log()`).
+- **`streamJournal` vs logging:** `effectiveStreamJournal` gates only the **extension’s journal reader** (tier B output channel). `effectiveDebugLog` gates **native** verbose records. Stream-only mode (`enabled: false`, `streamJournal: true`) turns on logging without overlay; full debug with streaming off (`enabled: true`, `streamJournal: false`) keeps native debug records without tailing to VS Code.
+- **`enabled` false, all subflags `null`:** pet mode (no `--debug`, all four env keys off after scrub).
+- **Subflags when `enabled` is false:** a **non-null** subflag is an explicit override and **may** enable that facet without turning on the full umbrella (e.g. `enabled: false`, `surfaces: true` → set only `HABITAT_DEBUG_SURFACES=1`, no `--debug`, no `HABITAT_DEBUG`). This matches native `resolve_subflag` in `habitat_config.rs`. **`null` subflags never imply on when `enabled` is false.**
+- **`enabled` true:** append `--debug` and set `HABITAT_DEBUG=1`; apply non-null `surfaces` / `hud` as `1`/`0`, nulls inherit `true` for surfaces/hud unless explicitly set false; apply `HABITAT_DEBUG_LOG` from `effectiveDebugLog` as above.
+
+Optional command (nice-to-have, not required for tier A): **Socrates: Start (debug)** — one-shot Start with resolved flags as if `enabled` were true for that spawn only (still requires **Stop** if a shared managed instance is already running).
+
+**Semantics:**
+
+- Presentation is fixed at companion process start. **Stop** shuts down the **shared** managed companion for all attached VS Code windows; then change settings and **Start** again (or implement Stop→Start in a toggle command later). Document this in extension README.
+- Toggling settings while attached should use `workspace.onDidChangeConfiguration` to warn that changes apply to the **next spawn**, not the running process.
+- **Show Diagnostics** remains orchestration-only (pipe, paths, attach). See [Effective vs requested debug state](#effective-vs-requested-debug-state) below.
+- Coexistence unchanged: extension-managed and clone `socrates` remain independent; debug parity does not merge their logs or mutexes.
+
+#### Tier B — journal stream acceptance criteria
+
+When `effectiveStreamJournal` is true:
+
+| Criterion | Requirement |
+|---|---|
+| **File discovery** | Follow the **current** session journal under `SOCRATES_LOG_DIR` (native logger rotates by size and date); do not watch a single path captured once at Start if rotation replaces the file. Re-resolve active `journal-*.jsonl` on rotation events. |
+| **Midnight / rollover** | Handle date/session rollovers the same way as rotation (switch watcher + read offset). |
+| **Partial lines** | Buffer incomplete JSONL lines across reads; never parse until a full line is available. |
+| **Bounded output** | Cap lines appended to the **Socrates** output channel per tick and total retained tail (document limits in code). |
+| **Lifecycle** | Dispose watchers/readers on **Stop**, `deactivate`, and failed Start; no leaked handles across reload. |
+| **Watcher API** | Prefer `workspace.createFileSystemWatcher` with a `RelativePattern` rooted at the log directory ([`createFileSystemWatcher`](https://code.visualstudio.com/api/references/vscode-api#workspace.createFileSystemWatcher)); Node `fs.watch` remains an acceptable implementation option. |
+
+### Spawn contract (managed `companion.exe`)
+
+Keep a single spawn builder in `extension/src/session.ts` (or a small `spawn-options.ts` tested by Node tests):
+
+1. **Argv:** `["--habitat-managed"]` and, when `socrates.debug.enabled` is true, `"--debug"` (native `parse_cli` already accepts this alongside managed mode).
+2. **Env (scrub then apply — both debug on and off):**
+   - Start from `{ ...process.env }` (or equivalent copy).
+   - **Always delete** these four keys before applying resolved settings (inherited values such as `HABITAT_DEBUG_HUD=0` otherwise override `--debug` in `habitat_config.rs` and break parity):
+     - `HABITAT_DEBUG`, `HABITAT_DEBUG_SURFACES`, `HABITAT_DEBUG_HUD`, `HABITAT_DEBUG_LOG`
+   - Set managed keys: `HABITAT_IDE_HOST=code`, `HABITAT_MANAGED=1`, `SOCRATES_LOG_DIR=<managed dir>`.
+   - Apply resolved flags: `HABITAT_DEBUG` / `--debug` when `enabled`; `HABITAT_DEBUG_SURFACES` / `HABITAT_DEBUG_HUD` from `effectiveSurfaces` / `effectiveHud`; `HABITAT_DEBUG_LOG` from `effectiveDebugLog` (`enabled || effectiveStreamJournal`).
+   - Omitting a key after delete is valid; assigning `undefined` in a **copied** `env` object also omits that key from the child environment on Node 22 ([`child_process.js` env merge](https://github.com/nodejs/node/blob/v22.16.0/lib/child_process.js#L644-L650)). Prefer **delete** for clarity in tests.
+3. **stdio:** keep `ignore` for tier A (Node: use `stdio: 'ignore'` when stdout/stderr are not consumed). Tier B uses **file tail** of JSONL under `SOCRATES_LOG_DIR`, not repiping stdout (release GUI subsystem + no launcher process).
+
+No changes to `managed_lifecycle.rs` protocol are required for tier A. Tier B may add an optional `status` field later (presentation snapshot); file tail avoids native/API churn for v1.
+
+#### Effective vs requested debug state
+
+Saved settings describe **requested** flags for the **next** managed spawn. They are **not** guaranteed to match the running companion:
+
+| Situation | Show Diagnostics / UI should report |
+|---|---|
+| This window **spawned** the current managed process | **Applied at spawn:** record argv/env used for that child (session field set in `ManagedSession` on successful spawn). |
+| This window **attached** to an existing managed process (another window started it) | **Native debug state: unknown** unless verified (future pipe field or log inference). Show **requested** settings separately. |
+| Settings changed after launch | **Requested** (current settings) vs **applied** (spawn snapshot) may differ until **Stop** and **Start**. |
+| **Stop** | Stops the **shared** managed instance; all windows lose the cat until something starts it again. |
+
+### Implementation steps (ordered)
+
+1. **`extension/package.json`** — contribute leaf configuration keys (`socrates.debug.enabled`, `.surfaces`, `.hud`, `.streamJournal`) with `scope: "application"`; document in `extension/README.md`; fix listing text that implies debug overlay without flags.
+2. **`extension/src/session.ts`** — resolve settings → spawn argv/env; scrub-all-four-then-apply; store **spawn snapshot** when this session spawns the child.
+3. **`extension/src/extension.ts`** — extend **Show Diagnostics** with **requested** (settings) vs **applied** (spawn snapshot if any) vs **unknown** (attached-only); never label saved settings as live native state.
+4. **Tests (`extension/tests/`)** — table-driven cases: scrub removes inherited `HABITAT_DEBUG_HUD=0` before applying `enabled: true`; inherited `HABITAT_DEBUG=1` removed when pet mode; explicit `surfaces: true` with `enabled: false`; `--debug` only when `enabled` true.
+5. **Manual parity gate** — same window: VSIX Start with `socrates.debug.enabled` true vs `socrates --debug` from clone (only one instance at a time): HUD, green/orange segments, yellow reach box, pointer tiers unchanged.
+6. **Docs** — root `README.md` troubleshooting row; `companion/README.md` cross-link managed log path + extension setting; `docs/architecture.md` one sentence that extension debug uses the same `habitat_config` flags.
+7. **Phase 5 table** — add row **Developer debug overlay** with pass criteria tier A (+ optional B).
+
+### Documentation alignment (Context7, 2026-10-25; revised per review)
+
+Cross-checked against [VS Code Extension API](https://code.visualstudio.com/api) and [Node.js 22 `child_process`](https://nodejs.org/docs/latest-v22.x/api/child_process.html). **Verdict: aligned after corrections below** (setting ID prefix rule, env scrub both modes, spawn snapshot vs settings, tier B lifecycle).
+
+| Plan element | Official guidance | Alignment |
+|---|---|---|
+| Setting IDs | Leaf IDs cannot prefix one another ([`contributes.configuration`](https://code.visualstudio.com/api/references/contribution-points#contributes.configuration)) | Use `socrates.debug.enabled`, `.surfaces`, `.hud`, `.streamJournal` only — not `socrates.debug` + `socrates.debug.*`. |
+| User-only debug toggles | `scope: application` ([`scope`](https://code.visualstudio.com/api/references/contribution-points#scope)) | Declare on each leaf; defaults off; no workspace overrides. |
+| Read settings at Start | `workspace.getConfiguration("socrates")` ([`WorkspaceConfiguration`](https://code.visualstudio.com/api/references/vscode-api#WorkspaceConfiguration)) | Drives **requested** spawn; store **applied** snapshot when this session spawns. |
+| Setting change while attached | No hot-reload of native presentation | `onDidChangeConfiguration` on `socrates.debug.*`; warn Stop → change → Start; note shared **Stop** semantics. |
+| Spawn bundled `companion.exe` | External processes allowed ([runtime security](https://code.visualstudio.com/docs/configure/extensions/extension-runtime-security)); `extensionKind: ["ui"]` ([extension host](https://code.visualstudio.com/api/advanced-topics/extension-host)) | `spawn(exe, args, { env, windowsHide, stdio: 'ignore' })`, no `shell`. |
+| Env scrub | Native `env_flag` wins over CLI umbrella when inherited keys remain | **Always** remove four `HABITAT_DEBUG*` keys from the child env copy, then apply resolved settings (debug on **and** off). |
+| Tier B journal tail | `workspace.createFileSystemWatcher` + `RelativePattern` for paths outside workspace ([API](https://code.visualstudio.com/api/references/vscode-api#workspace.createFileSystemWatcher)) | Prefer VS Code watcher; Node `fs.watch` optional; must follow native log rotation (see tier B table). |
+| Naming vs VS Code **Debug** | `onDebug` is debugger-only ([activation events](https://code.visualstudio.com/api/references/activation-events)) | No `onDebug` activation; Settings copy says “habitat / developer overlay”. |
+| Settings Sync | `application` settings may sync | Acceptable; `machine` scope only if we must block sync later. |
+
+**Native (repo):** `--debug` / `HABITAT_DEBUG*` semantics in `habitat_config.rs` and `companion/README.md`; extension forwards resolved flags after scrub.
+
+### Out of scope / risks
+
+- **Not equivalent:** Show Diagnostics alone; F5 Extension Development Host does not auto-enable debug unless the setting is on.
+- **Marketplace:** Debug defaults off; no new network; journal tail is local file read only.
+- **Performance:** Wireframes add draw work; document that debug is for developers.
+- **Remote SSH UI:** Debug overlay still local Windows desktop; same placement caveats as pet mode.
+
+### Tracker checklist (open until shipped)
+
+- [x] Leaf settings (`socrates.debug.enabled` + nullable subflags) + scrub-all-four-then-apply spawn wiring (`spawn-options.ts`, `session.ts`)
+- [x] Spawn snapshot + Show Diagnostics requested/applied/unknown reporting (`extension.ts`)
+- [x] README / extension listing copy aligned (debug image caption)
+- [x] Node tests for spawn options (`tests/spawn-options.test.mjs`)
+- [ ] Manual tier A parity vs clone `--debug`
+- [x] Tier B: journal tail (`journal-stream.ts` — watcher, partial lines, disposal; rotation via glob watcher)
+- [ ] Phase 5 parity table row updated with evidence (post manual gate)
+- [x] Context7 / API alignment review recorded (subsection above)
 
 ## Research findings
 
@@ -336,7 +473,7 @@ Each phase must leave usable, tested code. Remove disposable spike code before t
 - [x] Attach to an existing managed instance or start one; await readiness and verify version/identity. Serialise overlapping Start/Stop actions within each controller as well as across processes.
 - [x] Dispose registrations/listeners/output resources; return bounded asynchronous release from `deactivate`.
 - [x] Expose existing native logs with bounded output and clear missing-runtime/failed-start diagnostics. Do not create a second journal format. *(Show Diagnostics: pipe status + `%LOCALAPPDATA%\\Socrates\\logs` path.)*
-- [x] Add only preferences that have complete behavior. If auto-start is included, default off, use user-only scope and `onStartupFinished`, and respect explicit Stop without a restart loop. *(No settings in v1.)*
+- [x] Add only preferences that have complete behavior. If auto-start is included, default off, use user-only scope and `onStartupFinished`, and respect explicit Stop without a restart loop. *(No settings in v1; **developer debug settings** deferred — see [Extension developer debug parity](#extension-developer-debug-parity-planned).)*
 - [ ] Verify workspace trust, no-folder startup, remote workspace placement, and presentation restart semantics. Do not accept arbitrary environment or executable overrides from workspace settings.
 - [x] Exercise the actual extension API in the Extension Development Host with the official testing tooling; use Node tests for the process/control logic. *(F5 + installed VSIX; Node tests 6/6.)*
 
@@ -385,6 +522,7 @@ Each phase must leave usable, tested code. Remove disposable spike code before t
 | Remote workspaces | Overlay stays on the local Windows desktop; no remote companion starts | **Not tested** — `extensionKind: ui`; verify before Marketplace if SSH/WSL is in scope |
 | Source compatibility | Existing Windows VS Code and Cursor source workflows remain functional | **Pass** — `socrates` + Phase 0 launcher tests; no extension required for clone |
 | Resource use/privacy | Measured overhead is acceptable; no new editor-text collection or undisclosed network behavior | **Pass** — extension spawns local exe + pipe only; no extension telemetry |
+| Developer debug overlay | With `socrates.debug.enabled`, HUD/surface/reach matches clone `socrates --debug` on the same release binary | **Partial** — extension 0.1.2 spawn wiring; manual parity gate open |
 
 Run existing frontend and native checks from `companion/` when implementation touches relevant behavior:
 
@@ -479,6 +617,7 @@ Documentation cross-check: [VS Code UI extension placement](https://code.visuals
 | Elevated IDE | Define supported privilege configuration; do not promise cross-integrity access |
 | Package size/performance | Measure actual release artifact and compare runtime metrics to the source baseline |
 | Updates/uninstall | Windows executable locks, shared ownership, process exit, and retained user logs/settings |
+| Extension debug parity | Tier A settings on managed spawn; optional journal tail; no conflation with Show Diagnostics |
 | Marketplace acceptance | Validate the actual submitted package; technology feasibility is not preapproval |
 
 ## Progress log
@@ -497,3 +636,4 @@ Documentation cross-check: [VS Code UI extension placement](https://code.visuals
 - 2026-10-24: **Lifecycle gate** — read deadlines, logon-SID pipe DACL, multi-window dispose/stop, packaging npm-cli fix; isolated native validation + 25 Rust tests green.
 - 2026-10-24: **Phase 6 started** — README/extension README/marketplace metadata draft; signing + screenshots remain open.
 - 2026-10-24: **Phase 6 exit gate** — signing policy, `vsce` publish playbook, `extension/CHANGELOG|LICENSE|SUPPORT`, `docs/architecture.md` managed path, `galleryBanner`; screenshot PNGs still to capture.
+- 2026-10-25: **Extension debug parity plan** — documented gap, tiered targets, leaf settings (`socrates.debug.enabled` + nullable subflags), scrub-all-four-then-apply env, spawn snapshot vs requested state, tier B journal lifecycle; review corrections applied; implementation not started.

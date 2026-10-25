@@ -6,9 +6,9 @@ This **Windows desktop extension** starts, stops, and diagnoses the managed nati
 
 | Path | Who it is for | How you run Socrates |
 |---|---|---|
-| **This extension** | Desktop VS Code on Windows x64 without the clone launcher | Install a VSIX ([below](#install-local-vsix)); **Command Palette** → **Socrates: Start** / **Stop** / **Show Diagnostics** |
-| **GitHub clone** | Contributors and source users | `npm link` → `socrates` in the IDE terminal ([install on GitHub](https://github.com/NCbeebs/Socrates-The-Cat#install-and-run)) |
-| **Marketplace** | Everyone (future) | **Not published yet** - local VSIX only for now |
+| **Marketplace** | Desktop VS Code on Windows x64 | [Install from Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat); **Command Palette** → **Socrates: Start** / **Stop** / **Show Diagnostics** |
+| **GitHub clone** | Contributors and source users | `npm link` → `socrates` in the IDE terminal ([install on GitHub](https://github.com/NCbeebs/Socrates-The-Cat#install-from-source)) |
+| **Local VSIX** | Pre-release or Cursor (Open VSX not yet) | Build and install ([below](#install-local-vsix)) |
 
 Clone and extension both use the same native companion and pet assets. The extension does not replace or block the clone workflow.
 
@@ -28,7 +28,7 @@ Clone and extension both use the same native companion and pet assets. The exten
 
 He also walks and turns at ledge ends, stretches, grooms, sits and looks at the pointer, clings to moving horizontal splits, and slides down dividers. Activities and clips are in [`pet.json`](https://github.com/NCbeebs/Socrates-The-Cat/blob/main/assets/pets/default-cat/pet.json).
 
-**Developer layout overlay** (`socrates --debug` from the clone launcher; extension managed mode uses the same companion without requiring `--debug`):
+**Developer layout overlay** — clone: `socrates --debug`. Extension: enable **Socrates › Debug: Enabled** (or related settings below), **Stop** if the cat is already running, then **Socrates: Start**. Same release `companion.exe` and `HABITAT_DEBUG*` flags as the clone launcher.
 
 ![socrates --debug: ledge wireframes, pointer reach box, HUD, and terminal diagnostics](https://github.com/NCbeebs/Socrates-The-Cat/raw/main/docs/images/debug.png)
 
@@ -39,6 +39,12 @@ He also walks and turns at ledge ends, stretches, grooms, sits and looks at the 
 | OS / IDE | **Windows 10/11** with **desktop VS Code 1.74+** (x64, UI extension) |
 | Runtime | **WebView2** (same as Tauri/WebView2 apps) |
 | Remote hosts | **Remote SSH / WSL / dev container** UI not validated yet |
+
+## Install (Marketplace)
+
+In **desktop VS Code** on Windows: **Extensions** (**Ctrl+Shift+X**) → search **Socrates the Cat** (publisher **General Chromodynamics**), or open the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat). Then **Socrates: Start** from the Command Palette.
+
+**Cursor** uses Open VSX for in-app search; until Socrates is listed there, download the VSIX from the Marketplace page or use a build from source ([below](#install-local-vsix)).
 
 ## Install (local VSIX)
 
@@ -62,7 +68,17 @@ Open the **Command Palette** (**Ctrl+Shift+P**):
 
 - **Socrates: Start** - launch or attach to the managed cat (targets VS Code via `HABITAT_IDE_HOST=code`)
 - **Socrates: Stop** - stop the shared managed instance for this session
-- **Socrates: Show Diagnostics** - pipe status, companion path, managed log directory (`%LOCALAPPDATA%\Socrates\logs\vscode-managed`)
+- **Socrates: Show Diagnostics** - pipe status, companion path, managed log directory (`%LOCALAPPDATA%\Socrates\logs\vscode-managed`), requested vs applied habitat debug flags
+
+**Settings** (User, application scope — **Settings** → search `Socrates debug`):
+
+| Setting | Purpose |
+|---|---|
+| `socrates.debug.enabled` | HUD, ledge wireframes, `--debug` on the next spawn this window starts |
+| `socrates.debug.surfaces` / `socrates.debug.hud` | Optional overrides (`null` = inherit enabled) |
+| `socrates.debug.streamJournal` | Tail `journal-*.jsonl` into the **Socrates** output channel; also enables native debug log records when on without full overlay |
+
+Changes apply on the **next Start** after **Stop** (presentation is fixed at process start). **Stop** ends the shared managed cat for all VS Code windows.
 
 **Coexistence:** `socrates` from a clone and the extension-managed cat are independent. Multiple VS Code windows can attach to one managed instance; closing a window releases that window's ownership (the cat stays up while another window remains attached). **Stop** shuts down the shared managed instance for the session.
 

@@ -2,7 +2,7 @@
   "name": "socrates-the-cat",
   "displayName": "Socrates the Cat",
   "description": "A desktop cat that walks real tab strips, panel edges, and status bar in VS Code (Windows). Click-through overlay; pick up and move. Start, stop, and diagnostics for the native companion.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "GeneralChromodynamics",
   "icon": "media/icon.png",
   "license": "MIT",
@@ -52,6 +52,35 @@
     }
   },
   "contributes": {
+    "configuration": {
+      "title": "Socrates",
+      "properties": {
+        "socrates.debug.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Developer overlay (HUD, ledge wireframes) and habitat debug logging on the next managed Start from this machine. Stop the shared companion before changing."
+        },
+        "socrates.debug.surfaces": {
+          "type": ["boolean", "null"],
+          "default": null,
+          "scope": "application",
+          "description": "Override walkable/climbable surface outlines. null inherits socrates.debug.enabled."
+        },
+        "socrates.debug.hud": {
+          "type": ["boolean", "null"],
+          "default": null,
+          "scope": "application",
+          "description": "Override the on-overlay HUD. null inherits socrates.debug.enabled."
+        },
+        "socrates.debug.streamJournal": {
+          "type": ["boolean", "null"],
+          "default": null,
+          "scope": "application",
+          "description": "Tail native journal-*.jsonl lines into the Socrates output channel. null inherits socrates.debug.enabled. Also enables native debug log records when true without full overlay."
+        }
+      }
+    },
     "commands": [
       {
         "command": "socrates.start",

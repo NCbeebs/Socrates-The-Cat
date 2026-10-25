@@ -2,15 +2,17 @@
 
 A desktop cat that walks the real tab strips, panel edges, and status bar in **VS Code or Cursor**. He grooms, sleeps, dreams, reacts to your pointer, and falls when his ledge disappears. You can **click-and-hold to pick him up** and drop him on another ledge when he blocks your code. The overlay stays click-through so you can keep working.
 
-**Windows source preview.** The supported install path is still **clone and `socrates`** (below). A **VS Code extension** is in active development: you can build a local **VSIX** and install it on desktop VS Code for Windows—**not** on the Marketplace yet. Built with **Tauri 2, Rust, TypeScript 6, Vite 8, and Windows UI Automation**.
+**Windows.** Easiest install: the **[VS Code Marketplace extension](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat)** (bundled native companion; no Node/Rust required). Contributors can still **clone and `socrates`** ([Install from source](#install-from-source)). Built with **Tauri 2, Rust, TypeScript 6, Vite 8, and Windows UI Automation**.
 
 ## Status
 
 | Path | Who it is for | How you run Socrates |
 |---|---|---|
-| **GitHub clone** | Contributors and source users | `npm link` → `socrates` in the IDE terminal ([Install and run](#install-and-run)) |
-| **VS Code extension (dev)** | Desktop VS Code on Windows x64 without using the clone launcher | Build/install a VSIX ([VS Code extension](#vs-code-extension-in-development)); **Command Palette** → **Socrates: Start** / **Stop** / **Show Diagnostics** |
-| **Marketplace** | Everyone (future) | Not published yet |
+| **Marketplace extension** | Desktop **VS Code** on Windows x64 | Extensions → search **Socrates the Cat**, or [install from Marketplace](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat); then **Command Palette** → **Socrates: Start** / **Stop** / **Show Diagnostics** |
+| **GitHub clone** | Contributors and source users | `npm link` → `socrates` in the IDE terminal ([Install from source](#install-from-source)) |
+| **Local VSIX** | Pre-release builds or **Cursor** (Open VSX listing not yet) | Build a VSIX ([Extension packaging](#extension-packaging)); **Extensions: Install from VSIX** |
+
+**Cursor:** the in-app store uses [Open VSX](https://open-vsx.org/), not Microsoft’s Marketplace, so search may not list Socrates until it is published there. Use a [Marketplace VSIX download](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat) (**Download Extension** on the page) or a VSIX you built from this repo.
 
 Clone and extension both use the same native companion and pet assets. The extension does not replace or block the clone workflow.
 
@@ -38,11 +40,20 @@ He also walks and turns at ledge ends, stretches, grooms, sits and looks at the 
 | Node.js | [Node 24 LTS](https://nodejs.org/en/download) recommended; Node 22.12+ also meets the build and test requirements |
 | Rust | Stable **MSVC** toolchain via [rustup](https://rustup.rs/); `cargo` on your `PATH` |
 | Windows build tools | Microsoft C++ Build Tools with **Desktop development with C++**, Windows SDK, and **WebView2 Runtime** |
-| Git | Required for the clone command below |
+| Git | Required for the [clone](#install-from-source) path only |
+| WebView2 | Required for the Marketplace extension and clone builds |
 
-Follow the [Tauri Windows prerequisites](https://v2.tauri.app/start/prerequisites/#windows). Keep Node, Rust, and WebView2 updated. Node 20 is [end of life](https://nodejs.org/en/about/previous-releases).
+Follow the [Tauri Windows prerequisites](https://v2.tauri.app/start/prerequisites/#windows) when building from source. Keep Node, Rust, and WebView2 updated. Node 20 is [end of life](https://nodejs.org/en/about/previous-releases).
 
-## Install and run
+## Install from Marketplace
+
+1. Open **Extensions** (**Ctrl+Shift+X**) in **desktop VS Code** on Windows.
+2. Search for **Socrates the Cat** (publisher **General Chromodynamics**) and install, or open the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat).
+3. **Command Palette** (**Ctrl+Shift+P**) → **Socrates: Start**.
+
+Updates arrive through the normal extension update flow. **WebView2** must be installed. Remote SSH/WSL/dev-container UI is not validated yet ([extension README](extension/README.md)).
+
+## Install from source
 
 Run these commands in the integrated terminal of the IDE where you want Socrates:
 
@@ -110,8 +121,9 @@ Logs are stored locally under `%LOCALAPPDATA%\Socrates\logs`; the launcher print
 | PowerShell blocks scripts | Use `npm.cmd` and `socrates.cmd` |
 | Unexpected HUD or wireframes | Clear `HABITAT_DEBUG*` shell overrides and launch without `--debug` |
 | Build or logging failure | Check the reported error, disk space, and directory permissions; `SOCRATES_LOG_DIR` can select another log directory |
-| Extension: no **Socrates** commands | Confirm the extension is enabled; **Ctrl+Shift+P** and search `Socrates`; reload the window once after installing a VSIX |
+| Extension: no **Socrates** commands | Confirm the extension is enabled; **Ctrl+Shift+P** and search `Socrates`; reload the window once after install or update |
 | Extension: Start fails | Run **Socrates: Show Diagnostics**; ensure **WebView2** is installed; rebuild with `npm run package:win` if the bundled `companion.exe` is missing or stale |
+| Extension: no debug HUD | Enable **Socrates › Debug: Enabled** (or `socrates.debug.enabled`); **Stop**, then **Start** — settings apply on spawn, not while attached |
 
 ## Development
 
@@ -140,9 +152,9 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 
 See [architecture](docs/architecture.md) and [changelog](CHANGELOG.md).
 
-### VS Code extension (in development)
+### Extension packaging
 
-Requires **desktop VS Code on Windows** (VS Code 1.74+). The extension runs locally (`extensionKind: ui`); it does not start Socrates inside remote SSH/WSL sessions until that is explicitly tested and documented.
+Published builds ship from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat). To package a local **VSIX** (contributors or Cursor), use **desktop VS Code on Windows** (VS Code 1.74+). The extension runs locally (`extensionKind: ui`); it does not start Socrates inside remote SSH/WSL sessions until that is explicitly tested and documented.
 
 **Build and package** (from repo root; needs a release `companion.exe`):
 
@@ -157,7 +169,7 @@ npm run package:win
 
 `npm run package:win` runs `npm ci` and `tauri:build:release` in `companion/` by default (`package:win:fast` skips the native rebuild). Output: `extension/stage/socrates-the-cat-*-win32-x64.vsix` and `extension/stage/bundle-manifest.json` (versions and sha256).
 
-**Install and run:** Extensions → **…** → **Install from VSIX** → select the VSIX under `extension/stage/`. Open the **Command Palette** (**Ctrl+Shift+P**):
+**Install VSIX:** Extensions → **…** → **Install from VSIX** → select the VSIX under `extension/stage/`. Open the **Command Palette** (**Ctrl+Shift+P**):
 
 - **Socrates: Start** — launch or attach to the managed cat (targets VS Code via `HABITAT_IDE_HOST=code`)
 - **Socrates: Stop** — stop the shared managed instance for this session
@@ -169,13 +181,13 @@ npm run package:win
 
 **Extension development (F5):** open this repo in VS Code → **Run and Debug** → **Socrates extension**. Uses the release binary at `companion/src-tauri/target/release/companion.exe` when no bundled exe is present.
 
-Implementation status and pre-Marketplace checklist: [vsc-ext.md](vsc-ext.md).
+Implementation status and release checklist: [vsc-ext.md](vsc-ext.md).
 
 Issues and PRs are welcome. Bug reports should include Windows and IDE versions, launch command, steps to reproduce, session ID, and relevant **reviewed/redacted** logs. Report suspected security vulnerabilities privately to [generalchromodynamics@protonmail.com](mailto:generalchromodynamics@protonmail.com).
 
 ## Roadmap
 
-- VS Code Marketplace release (Phase 6 prep done; manual upload verify + Phase 7, then publish when ready)
+- Open VSX publish (Cursor in-app Extensions search)
 - Refined animations
 - Linux and Mac support
 

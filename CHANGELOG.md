@@ -8,7 +8,11 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ### VS Code extension (Windows desktop)
 
-Work is tracked in [vsc-ext.md](vsc-ext.md). **Phase 6 prep complete; Phase 7 code/artifact audit complete.** Manual runtime/Marketplace checks and unresolved test/tooling findings still gate public `vsce publish`.
+- **Extension habitat debug (0.1.2)** — `socrates.debug.*` settings, managed spawn scrub/apply, Show Diagnostics requested vs applied, journal stream to output channel. See [extension/CHANGELOG.md](extension/CHANGELOG.md).
+
+- **Command discovery troubleshooting (2026-10-25)** — Marketplace and manual VSIX installation logs report success; both installed 0.1.1 manifests declare Start, Stop, and Show Diagnostics. Use **Ctrl+Shift+P** and search `Socrates` (the input starts with `>`); ordinary title-bar search does not list commands. Missing commands in the Command Palette remain unconfirmed.
+
+Work is tracked in [vsc-ext.md](vsc-ext.md). **VS Code Marketplace:** [Socrates the Cat](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat) (`GeneralChromodynamics.socrates-the-cat`). Open VSX listing for Cursor in-app search is still pending.
 
 - **Extension 0.1.1 (2026-10-25)** — Phase 7 lifecycle/cleanup build for Marketplace (`win32-x64`); bump required because 0.1.0 cannot be overwritten. Rebuild with `npm run package:win` in `extension/` → `extension/stage/socrates-the-cat-0.1.1-win32-x64.vsix`.
 

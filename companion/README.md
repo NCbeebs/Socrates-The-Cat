@@ -34,7 +34,7 @@ cargo run --locked --manifest-path src-tauri/Cargo.toml --features habitat-unit-
 
 Expect `habitat_unit: ok (31 checks)`. Assertion bodies live in shared `unit_tests` helpers; `#[test]` wrappers and the fallback runner both call them.
 
-The launcher starts `tauri dev`, including a Vite server on localhost port 1420. Keep it local. Vite `server.fs.allow` is limited to this package and `../assets/pets/default-cat/` (sprites and manifest), not the whole repository. Logs and other local files can still contain paths; review before sharing. Marketplace distribution is not published yet; local VSIX packaging is documented under [extension/](../extension/).
+The launcher starts `tauri dev`, including a Vite server on localhost port 1420. Keep it local. Vite `server.fs.allow` is limited to this package and `../assets/pets/default-cat/` (sprites and manifest), not the whole repository. Logs and other local files can still contain paths; review before sharing. Marketplace install: [Socrates the Cat](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat). Local VSIX packaging is documented under [extension/](../extension/).
 
 ## VS Code extension (managed mode)
 
@@ -46,6 +46,8 @@ The optional [VS Code extension](../extension/) ships a release `companion.exe` 
 | Extension **Start** | On | `%LOCALAPPDATA%\Socrates\logs\vscode-managed` |
 
 Both can run on the same machine without sharing the managed mutex/pipe. Only extension-managed instances coordinate through the pipe; duplicate `--habitat-managed` starters exit early. Extension **Stop** shuts down the shared managed process; closing one VS Code window only **releases** that window’s attach handle.
+
+Habitat debug overlay from the extension uses the same `HABITAT_DEBUG*` / `--debug` flags as `socrates --debug` (user settings `socrates.debug.*` in VS Code; **Stop** then **Start** after changes).
 
 Details: [extension/README.md](../extension/README.md), [vsc-ext.md](../vsc-ext.md).
 

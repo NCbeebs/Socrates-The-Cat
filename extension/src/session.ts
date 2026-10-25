@@ -18,6 +18,12 @@ import {
   type StatusPayload,
   waitForReady,
 } from "./managed-pipe.js";
+import {
+  buildManagedChildEnv,
+  type AppliedSpawnDiagnostics,
+  type DebugSettingsInput,
+  toAppliedSpawnDiagnostics,
+} from "./spawn-options.js";
 
 export interface SessionOptions {
   extensionPath: string;
@@ -31,8 +37,14 @@ export interface SessionSnapshot {
   companionPath: string | null;
   lastStatus: StatusPayload | null;
   spawnedChild: boolean;
+  didSpawnManagedProcess: boolean;
+  appliedSpawn: AppliedSpawnDiagnostics | null;
   pipePath: string;
   logDir: string;
+}
+
+export interface StartResult {
+  attached: boolean;
 }
 
 export class ManagedSession {
@@ -41,6 +53,7 @@ export class ManagedSession {
   private child: ChildProcess | null = null;
   private lastStatus: StatusPayload | null = null;
   private companionPath: string | null = null;
+  private appliedSpawn: AppliedSpawnDiagnostics | null = null;
   private readonly options: SessionOptions;
   private opChain: Promise<void> = Promise.resolve();
   private disposed = false;
@@ -58,24 +71,28 @@ export class ManagedSession {
       companionPath: this.companionPath,
       lastStatus: this.lastStatus,
       spawnedChild: this.child !== null,
+      didSpawnManagedProcess: this.appliedSpawn !== null,
+      appliedSpawn: this.appliedSpawn,
       pipePath: pipePath(),
       logDir: this.options.logDir,
     };
   }
 
-  start(): Promise<void> {
+  start(debugSettings: DebugSettingsInput): Promise<StartResult> {
     if (this.disposed) {
-      return Promise.resolve();
+      return Promise.resolve({ attached: false });
     }
     const attempt = this.beginStartAttempt();
-    return this.enqueue(async () => {
+    return this.enqueueStart(async () => {
       if (this.disposed || attempt.signal.aborted || this.socket) {
         this.finishStartAttempt(attempt);
-        return;
+        return { attached: false };
       }
       const signal = attempt.signal;
 
       let spawned: ChildProcess | null = null;
+      let pendingSpawn: ReturnType<typeof buildManagedChildEnv> | null = null;
+      let attemptedSpawn = false;
       try {
         const exe = resolveCompanionExecutable(
           this.options.extensionPath,
@@ -86,21 +103,18 @@ export class ManagedSession {
         this.assertStartStillValid(signal);
 
         if (!existing?.ready) {
-          spawned = spawn(
-            exe,
-            ["--habitat-managed"],
-            {
-              cwd: path.dirname(exe),
-              env: {
-                ...process.env,
-                HABITAT_IDE_HOST: "code",
-                HABITAT_MANAGED: "1",
-                SOCRATES_LOG_DIR: this.options.logDir,
-              },
-              windowsHide: true,
-              stdio: "ignore",
-            },
+          pendingSpawn = buildManagedChildEnv(
+            process.env,
+            this.options.logDir,
+            debugSettings,
           );
+          attemptedSpawn = true;
+          spawned = spawn(exe, pendingSpawn.argv, {
+            cwd: path.dirname(exe),
+            env: pendingSpawn.env,
+            windowsHide: true,
+            stdio: "ignore",
+          });
           this.child = spawned;
           spawned.once("error", () => {
             if (this.child === spawned) {
@@ -139,6 +153,17 @@ export class ManagedSession {
           this.lastStatus = attached.status ?? this.lastStatus;
           this.socket = socket;
           this.bindAttachedSocket(socket);
+          if (
+            attemptedSpawn &&
+            pendingSpawn &&
+            spawned &&
+            this.child === spawned
+          ) {
+            this.appliedSpawn = toAppliedSpawnDiagnostics(pendingSpawn);
+          } else {
+            this.appliedSpawn = null;
+          }
+          return { attached: true };
         } catch (error) {
           socket.destroy();
           throw error;
@@ -147,8 +172,9 @@ export class ManagedSession {
         if (this.child === spawned) {
           this.child = null;
         }
+        this.appliedSpawn = null;
         if (error instanceof Error && error.message === "operation aborted") {
-          return;
+          return { attached: false };
         }
         throw error;
       } finally {
@@ -159,7 +185,7 @@ export class ManagedSession {
 
   stop(): Promise<void> {
     this.cancelStartAttempts();
-    return this.enqueue(async () => {
+    return this.enqueueVoid(async () => {
       const attached = this.socket;
       if (attached) {
         try {
@@ -183,13 +209,14 @@ export class ManagedSession {
       }
       this.child = null;
       this.lastStatus = null;
+      this.appliedSpawn = null;
     });
   }
 
   dispose(): Promise<void> {
     this.disposed = true;
     this.cancelStartAttempts();
-    return this.enqueue(async () => {
+    return this.enqueueVoid(async () => {
       const attached = this.socket;
       if (attached) {
         try {
@@ -206,6 +233,7 @@ export class ManagedSession {
         }
       }
       this.child = null;
+      this.appliedSpawn = null;
     });
   }
 
@@ -231,6 +259,7 @@ export class ManagedSession {
     const onLost = () => {
       if (this.socket === socket) {
         this.socket = null;
+        this.appliedSpawn = null;
       }
     };
     socket.on("error", onLost);
@@ -243,7 +272,13 @@ export class ManagedSession {
     }
   }
 
-  private enqueue(task: () => Promise<void>): Promise<void> {
+  private enqueueStart(task: () => Promise<StartResult>): Promise<StartResult> {
+    const next = this.opChain.then(task);
+    this.opChain = next.then(() => undefined).catch(() => undefined);
+    return next;
+  }
+
+  private enqueueVoid(task: () => Promise<void>): Promise<void> {
     const next = this.opChain.then(task);
     this.opChain = next.catch(() => undefined);
     return next;
