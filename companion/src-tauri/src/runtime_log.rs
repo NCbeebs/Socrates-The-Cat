@@ -325,12 +325,11 @@ pub(crate) fn write_runtime_log(entry: Entry) -> Result<(), String> {
     write(entry)
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, feature = "habitat-unit-tests"))]
+mod unit_tests {
     use super::*;
 
-    #[test]
-    fn appends_and_rotates_without_overwriting_recent_records() {
+    pub(super) fn appends_and_rotates_without_overwriting_recent_records() {
         let directory =
             std::env::temp_dir().join(format!("socrates-logger-test-{}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
@@ -357,8 +356,7 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
-    #[test]
-    fn journal_cleanup_recognizes_only_socrates_filenames() {
+    pub(super) fn journal_cleanup_recognizes_only_socrates_filenames() {
         assert!(is_socrates_journal_file_name("journal-2026-10-19.jsonl"));
         assert!(is_socrates_journal_file_name("journal-2026-10-19.1.jsonl"));
         assert!(is_socrates_journal_file_name("journal-2026-10-19.3.jsonl"));
@@ -367,4 +365,25 @@ mod tests {
         assert!(!is_socrates_journal_file_name("journal-not-a-date.jsonl"));
         assert!(!is_socrates_journal_file_name("launcher-2026-10-19.jsonl"));
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unit_tests;
+
+    #[test]
+    fn appends_and_rotates_without_overwriting_recent_records() {
+        unit_tests::appends_and_rotates_without_overwriting_recent_records();
+    }
+
+    #[test]
+    fn journal_cleanup_recognizes_only_socrates_filenames() {
+        unit_tests::journal_cleanup_recognizes_only_socrates_filenames();
+    }
+}
+
+#[cfg(feature = "habitat-unit-tests")]
+pub(crate) fn run_unit_tests() {
+    unit_tests::appends_and_rotates_without_overwriting_recent_records();
+    unit_tests::journal_cleanup_recognizes_only_socrates_filenames();
 }

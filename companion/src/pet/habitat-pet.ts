@@ -98,6 +98,11 @@ export interface PetDrawState {
   swingPivotY: number;
   /** Overlay-local px for `npm run tauri:dev:debug` pointer alignment checks. */
   pointerDebug: PetPointerDebug | null;
+  /**
+   * Overlay-local px when the validated cursor is inside the swipe/pounce reach box.
+   * Rendered in `main.ts` as a red dot in normal pet mode (full pointer debug is opt-in).
+   */
+  pointerNearReach: { x: number; y: number } | null;
 }
 
 interface Ledge {
@@ -1365,7 +1370,23 @@ export class HabitatPet {
       swingPivotX: this.localX * sx,
       swingPivotY: this.localY * sy,
       pointerDebug: this.buildPointerDebug(sx, sy, this.frameValidatedPointer),
+      pointerNearReach: this.buildPointerNearReachHint(
+        sx,
+        sy,
+        this.frameValidatedPointer,
+      ),
     };
+  }
+
+  private buildPointerNearReachHint(
+    sx: number,
+    sy: number,
+    pointer: IdeLocalPointerCoords | null,
+  ): { x: number; y: number } | null {
+    if (!pointer || !this.pointerEngagesReach(pointer)) {
+      return null;
+    }
+    return { x: pointer.x * sx, y: pointer.y * sy };
   }
 
   private buildPointerDebug(

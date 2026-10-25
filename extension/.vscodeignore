@@ -1,0 +1,12 @@
+.vscode/**
+.vscode-test/**
+scripts/**
+stage/**
+src/**
+tests/**
+tsconfig.json
+.gitignore
+**/*.map
+**/*.ts
+**/.gitkeep
+media/README.md

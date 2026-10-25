@@ -4,6 +4,38 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 ## Unreleased
 
+- **Pointer reach hint** — In normal pet mode (no `--debug`), a red overlay dot appears when the cursor is inside the same reach box used for swipe, pounce, and pick-up. Debug mode still adds the yellow reach outline and full pointer diagnostics.
+
+### VS Code extension (Windows desktop)
+
+- **Extension habitat debug (0.1.2)** — `socrates.debug.*` settings, managed spawn scrub/apply, Show Diagnostics requested vs applied, journal stream to output channel. See [extension/CHANGELOG.md](extension/CHANGELOG.md).
+
+- **Command discovery troubleshooting (2026-10-25)** — Marketplace and manual VSIX installation logs report success; both installed 0.1.1 manifests declare Start, Stop, and Show Diagnostics. Use **Ctrl+Shift+P** and search `Socrates` (the input starts with `>`); ordinary title-bar search does not list commands. Missing commands in the Command Palette remain unconfirmed.
+
+Work is tracked in [vsc-ext.md](vsc-ext.md). **VS Code Marketplace:** [Socrates the Cat](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat) (`GeneralChromodynamics.socrates-the-cat`). Open VSX listing for Cursor in-app search is still pending.
+
+- **Extension 0.1.1 (2026-10-25)** — Phase 7 lifecycle/cleanup build for Marketplace (`win32-x64`); bump required because 0.1.0 cannot be overwritten. Rebuild with `npm run package:win` in `extension/` → `extension/stage/socrates-the-cat-0.1.1-win32-x64.vsix`.
+
+- **Native tests (2026-10-25)** — Standard `#[test]` discovery restored; optional `habitat-unit-tests` feature + `habitat_unit` binary bypass a **local** loader failure (`cargo test` executable imports `userenv.dll`; exact cause unresolved). **31 checks** passed via fallback runner; `cargo test --lib` still fails at load on this machine.
+- **Phase 7 cleanup** — close native mutex handles on duplicate/error paths, free SID strings on conversion errors, flush the journal from Tauri's exit event, and compile the fallback-only helper only with its feature. Pipe connection failures/cancellation now clean up listeners and sockets, connections have a deadline, Start attempts clear on every outcome, and packaging clears old compiled extension output before rebuilding. No new dependencies.
+- **Phase 7 automated checks (2026-10-25)** — companion tests **97/97**, frontend build and unused-symbol checks passed; extension tests **17/17** and explicit unused-symbol checks passed; native test compilation is warning-free and fallback **31 checks** passed. The five wrapper imports are corrected; standard `cargo test --lib` still exits before tests with `0xC0000139` on this host.
+- **Phase 7 artifact/lifecycle checks** — rebuilt and inspected the Windows VSIX (13 entries, 8,401,869 bytes); bundled executable hash matches the fresh release. Extracted-package smoke passed with two controllers, duplicate-start prevention, shared-owner disposal, actual Stop/process exit, restart, last-owner grace shutdown, and exit journal flush. Actual VS Code window/upgrade/crash checks remain open. Existing Azure/MSAL dev-tool audit findings are recorded in the tracker; those dependencies are excluded from the VSIX.
+- **Phase 6 cleanup** — `TOKEN_GROUPS` via `read_unaligned`; publisher ID `GeneralChromodynamics` aligned in tracker/docs; extension icon + listing demo URLs; artwork licensing note in `extension/README.md`; pin `@types/vscode` to 1.74.0; `package:win` relies on `vscode:prepublish` compile only; exclude `media/README.md` from VSIX; added managed lifecycle + `exchangeOne` regression tests.
+- **Pre-release scan (2026-10-24)** — companion/Rust/extension test baseline before latest lifecycle fixes; cross-logon denial and rebuilt-VSIX lifecycle validation remain manual gates.
+
+- **Managed lifecycle fixes** — single `request_managed_shutdown` path (Stop exits companion); concurrent per-client pipe threads; session-scoped pipe/mutex names; 60 s initial-attach deadline; bounded reads and stricter status validation; non-blocking teardown on `RunEvent::ExitRequested`. Extension: no controller-side orphan kill (native deadline only); Start abort at enqueue time + `disposed` gate; attached socket error/close handlers; exchange rejects on pipe close. Native: non-blocking `pipe_peek` (`BufReader::buffer` + `PeekNamedPipe`); logon-SID DACL on `CreateNamedPipeW`; `OwnedToken` + `TOKEN_GROUPS` for logon SID; release bound to connection; connection caps.
+- **Phase 6** — Extension `README`, `CHANGELOG`, `LICENSE`, `SUPPORT`, `galleryBanner`, signing policy, `vsce` publish playbook; `docs/architecture.md` + `companion/README.md` managed mode; `extension/media/README.md` screenshot spec; root README layout. Marketplace PNGs not committed yet.
+- **Packaging** — `package:win` rebuilds companion by default; `package:win:fast` skips native build; npm/vsce invoked via `node …/npm-cli.js` and `node …/vsce` (no `shell: true`, paths with spaces safe).
+- **`extension/`** — UI extension (VS Code 1.74+, `extensionKind: ui`): Command Palette commands **Socrates: Start**, **Stop**, and **Show Diagnostics**; spawns bundled `companion.exe` with `HABITAT_IDE_HOST=code` or attaches via managed pipe. F5 launch: `.vscode/launch.json`.
+- **Packaging** — `npm run package:win` (rebuilds native) / `package:win:fast` in `extension/` → `extension/stage/*.vsix` and `bundle-manifest.json` (companion sha256 and versions).
+- **Native managed lifecycle** — `managed_lifecycle.rs`: `--habitat-managed`, session-scoped mutex/pipe `…Managed.v1.<sessionId>` (protocol v1: attach / release / status / stop). Source `socrates` / `tauri dev` unchanged.
+- **Companion release build** — `npm run tauri:build:release` in `companion/` (`tauri build --no-bundle`).
+- **Regression (Phase 5)** — `companion` tests 97 + Rust 23 + `extension` tests 6; installed VSIX validated on a dev machine (see parity table in `vsc-ext.md`).
+
+### Planning and other
+
+- Expand [vsc-ext.md](vsc-ext.md) with official API research, clone compatibility contract, phased implementation plan (0–7), and parity evidence table.
+- Document Arch Linux/CachyOS compatibility research and a staged Linux implementation plan in [linux_support.md](linux_support.md), including X11/Wayland boundaries, Windows regression gates, and final cleanup; runtime support remains Windows-only.
 - Verify expired naps finish segmented dream/rest loops and outro before waking, with regression coverage for all four dream/rest clips and immediate waking without segmented playback.
 - Art review: keep the cat's eyes closed in frames 2-11 of `Socs-snoozing.png`, using frame 1's eye regions in the open Pixelorama working canvas; other pixels and frames are unchanged (not yet saved or exported).
 - Add `dream_snoozing` (`Socs-snoozing.png`) as the sleep rest clip (10–25 breath loops); spectacle dreams stay on `dreamAnimations`. During sleep, weighted picks are ~66.7% snooze / ~33.3% spectacle (2:1), and rest/dream segments chain until `activities.sleep` min/max rest time elapses, then `sleep_exit`. Expired nap budget defers wake until the current segmented dream/rest clip finishes (loops + outro).
@@ -33,5 +65,7 @@ Notable user-facing changes. This project is an unreleased source preview.
 - Connection timing diagnostics currently bypass the debug-log setting, and failed connection attempts omit elapsed time.
 - After a tracked IDE window change, bottom-of-window fall recovery can still snap the cat upward to a higher status bar; preventing cross-window attachment rebinding does not eliminate this separate jump.
 - Pickup uses 50 ms pointer polling and the reach box, not per-pixel hit tests; a press that starts outside the box can register as inside between samples. Dragging can still move the caret or select editor text under the overlay.
-- Windows only; installation requires a source checkout and the Node/Rust build toolchains. No published installer or IDE extension.
+- Windows only. **Clone install** still requires a checkout and Node/Rust build toolchains. **Extension install** uses a prebuilt `companion.exe` inside the VSIX (WebView2 still required); build the VSIX from source as documented in the README. Not published to the VS Code Marketplace yet.
+- Extension: no auto-start on VS Code launch in v1; use **Socrates: Start**. Remote SSH/WSL window placement, upgrade/uninstall torture tests, and clean-machine validation are not complete pre-Marketplace (see `vsc-ext.md`).
+- Managed extension instances do not stop a separately launched `socrates` from a clone; duplicate prevention applies only among extension-managed starts.
 - Broader VS Code layout testing is still needed. A previously reported startup animation pause has a fallback in place, but its effectiveness across cold starts remains unconfirmed.

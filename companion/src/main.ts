@@ -131,6 +131,43 @@ function ensurePointerDebugLayer(svg: SVGSVGElement): SVGGElement {
   return layer;
 }
 
+function ensurePointerNearReachLayer(svg: SVGSVGElement): SVGGElement {
+  let layer = svg.querySelector<SVGGElement>("#layer-pointer-near-reach");
+  if (!layer) {
+    layer = document.createElementNS(SVG_NS, "g");
+    layer.setAttribute("id", "layer-pointer-near-reach");
+    layer.setAttribute("pointer-events", "none");
+    svg.appendChild(layer);
+  }
+  return layer;
+}
+
+function appendPointerSampleDot(layer: SVGGElement, x: number, y: number): void {
+  const dot = document.createElementNS(SVG_NS, "circle");
+  dot.setAttribute("cx", String(x));
+  dot.setAttribute("cy", String(y));
+  dot.setAttribute("r", "5");
+  dot.setAttribute("fill", "#ff5050");
+  dot.setAttribute("stroke", "#fff");
+  dot.setAttribute("stroke-width", "1");
+  layer.appendChild(dot);
+}
+
+function drawPointerNearReach(
+  layer: SVGGElement,
+  hint: PetDrawState["pointerNearReach"],
+): void {
+  while (layer.firstChild) {
+    layer.removeChild(layer.firstChild);
+  }
+  if (!hint) {
+    layer.setAttribute("display", "none");
+    return;
+  }
+  layer.setAttribute("display", "inline");
+  appendPointerSampleDot(layer, hint.x, hint.y);
+}
+
 function drawPointerDebug(layer: SVGGElement, debug: PetPointerDebug | null) {
   while (layer.firstChild) {
     layer.removeChild(layer.firstChild);
@@ -155,14 +192,7 @@ function drawPointerDebug(layer: SVGGElement, debug: PetPointerDebug | null) {
     layer.appendChild(rect);
   }
   if (debug.sample) {
-    const dot = document.createElementNS(SVG_NS, "circle");
-    dot.setAttribute("cx", String(debug.sample.x));
-    dot.setAttribute("cy", String(debug.sample.y));
-    dot.setAttribute("r", "5");
-    dot.setAttribute("fill", "#ff5050");
-    dot.setAttribute("stroke", "#fff");
-    dot.setAttribute("stroke-width", "1");
-    layer.appendChild(dot);
+    appendPointerSampleDot(layer, debug.sample.x, debug.sample.y);
   }
   if (debug.pounceDestLocalX != null && debug.reach) {
     const dest = document.createElementNS(SVG_NS, "line");
@@ -224,6 +254,7 @@ async function renderLoop(svg: SVGSVGElement, hud: HTMLElement) {
   }
 
   const surfacesLayer = ensureSurfacesLayer(svg);
+  const pointerNearReachLayer = ensurePointerNearReachLayer(svg);
   const pointerDebugLayer = ensurePointerDebugLayer(svg);
 
   let lastDrawKey = "";
@@ -450,6 +481,7 @@ async function renderLoop(svg: SVGSVGElement, hud: HTMLElement) {
       }
     }
     journal.observe(state);
+    drawPointerNearReach(pointerNearReachLayer, state.pointerNearReach);
     if (showPointerDebug) {
       drawPointerDebug(pointerDebugLayer, state.pointerDebug);
     }

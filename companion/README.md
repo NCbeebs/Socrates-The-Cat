@@ -16,10 +16,40 @@ For installation and normal use, see the [repository README](../README.md). Run 
 | `npm run dev` | Vite frontend server only; native IPC requires the Tauri host |
 | `npm test` | JavaScript/TypeScript regression tests using Node's type stripping |
 | `npm run build` | Type-check and bundle the frontend; does not build the native executable |
-| `cargo test --locked --manifest-path src-tauri/Cargo.toml` | Native Rust tests |
-| `npm run tauri -- build --no-bundle` | Build the native release executable and embedded frontend |
+| `cargo test --locked --manifest-path src-tauri/Cargo.toml` | Standard Rust unit tests (`#[test]` discovery) where the test executable loads |
+| `cargo run --locked --manifest-path src-tauri/Cargo.toml --features habitat-unit-tests --bin habitat_unit` | **Optional fallback:** same 31 native assertion functions when `cargo test` fails at load (see below) |
+| `npm run tauri:build:release` | Build the native release executable and embedded frontend (no MSI/NSIS) |
 
-The launcher starts `tauri dev`, including a Vite server on localhost port 1420. Keep it local. Vite `server.fs.allow` is limited to this package and `../assets/pets/default-cat/` (sprites and manifest), not the whole repository. Logs and other local files can still contain paths; review before sharing. Packaged distribution is not yet a supported release workflow.
+### Native tests: standard vs fallback (Windows)
+
+**Preferred:** `cargo test --locked --manifest-path src-tauri/Cargo.toml` (per-test results, filters, future integration tests).
+
+On this developer machine, the `cargo test` executable fails **before any test runs** (`STATUS_ENTRYPOINT_NOT_FOUND`, 0xC0000139). The failing binary imports `userenv.dll!GetUserProfileDirectoryW`; the optional `habitat_unit` dev binary does not. System32’s `userenv.dll` loads and exports that symbol here, so this is a **local loader failure bypassed by an alternative runner**, not a confirmed general Rust or libtest defect (`harness = false` integration tests can fail the same way).
+
+**Fallback (opt-in, not a default Cargo feature):**
+
+```powershell
+cargo run --locked --manifest-path src-tauri/Cargo.toml --features habitat-unit-tests --bin habitat_unit
+```
+
+Expect `habitat_unit: ok (31 checks)`. Assertion bodies live in shared `unit_tests` helpers; `#[test]` wrappers and the fallback runner both call them.
+
+The launcher starts `tauri dev`, including a Vite server on localhost port 1420. Keep it local. Vite `server.fs.allow` is limited to this package and `../assets/pets/default-cat/` (sprites and manifest), not the whole repository. Logs and other local files can still contain paths; review before sharing. Marketplace install: [Socrates the Cat](https://marketplace.visualstudio.com/items?itemName=GeneralChromodynamics.socrates-the-cat). Local VSIX packaging is documented under [extension/](../extension/).
+
+## VS Code extension (managed mode)
+
+The optional [VS Code extension](../extension/) ships a release `companion.exe` and starts it with `--habitat-managed` / `HABITAT_MANAGED=1` plus `HABITAT_IDE_HOST=code`. That path uses a session-scoped named pipe and mutex (see `managed_lifecycle.rs`); it is **not** used by `socrates` or `npm run tauri:dev`.
+
+| Launch | Managed control plane | Typical logs |
+|--------|----------------------|--------------|
+| `socrates` / `tauri dev` | Off | `%LOCALAPPDATA%\Socrates\logs` (or `SOCRATES_LOG_DIR`) |
+| Extension **Start** | On | `%LOCALAPPDATA%\Socrates\logs\vscode-managed` |
+
+Both can run on the same machine without sharing the managed mutex/pipe. Only extension-managed instances coordinate through the pipe; duplicate `--habitat-managed` starters exit early. Extension **Stop** shuts down the shared managed process; closing one VS Code window only **releases** that window’s attach handle.
+
+Habitat debug overlay from the extension uses the same `HABITAT_DEBUG*` / `--debug` flags as `socrates --debug` (user settings `socrates.debug.*` in VS Code; **Stop** then **Start** after changes).
+
+Details: [extension/README.md](../extension/README.md), [vsc-ext.md](../vsc-ext.md).
 
 ## Environment
 
@@ -28,6 +58,7 @@ Set overrides in your shell before launch. No `.env` file is needed. Boolean fla
 | Variable | Default | Purpose |
 |---|---|---|
 | `HABITAT_IDE_HOST` | ancestry, then Cursor | `code` (also `vscode`), `cursor`, or `auto`; invalid values, including an empty string, warn and fall back to Cursor |
+| `HABITAT_MANAGED` | off | Extension-managed sessions only: `1` / `true` / `on`, or pass `--habitat-managed` on the native executable. Source `socrates` does not set this. |
 | `HABITAT_LIVE_UIA` | on | Poll live IDE geometry |
 | `HABITAT_SURFACES_PATH` | unset | Optional static surfaces JSON; normally used with live UIA off, also read when no live snapshot is available |
 | `HABITAT_FOREGROUND_IDE` | on | Track the session IDE's foreground window; `0` selects its largest visible window |

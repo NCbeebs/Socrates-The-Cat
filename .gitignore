@@ -33,6 +33,11 @@ dist-ssr/
 target/
 **/target/
 companion/dist/
+extension/out/
+extension/node_modules/
+extension/stage/
+extension/bin/win32-x64/*.exe
+extension/LICENSE
 
 # OS & editor noise
 .DS_Store
