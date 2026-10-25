@@ -6,9 +6,11 @@ Notable user-facing changes. This project is an unreleased source preview.
 
 - **Pointer reach hint** — In normal pet mode (no `--debug`), a red overlay dot appears when the cursor is inside the same reach box used for swipe, pounce, and pick-up. Debug mode still adds the yellow reach outline and full pointer diagnostics.
 
-### VS Code extension (Windows desktop; not on Marketplace yet)
+### VS Code extension (Windows desktop)
 
 Work is tracked in [vsc-ext.md](vsc-ext.md). **Phase 6 prep complete; Phase 7 code/artifact audit complete.** Manual runtime/Marketplace checks and unresolved test/tooling findings still gate public `vsce publish`.
+
+- **Extension 0.1.1 (2026-10-25)** — Phase 7 lifecycle/cleanup build for Marketplace (`win32-x64`); bump required because 0.1.0 cannot be overwritten. Rebuild with `npm run package:win` in `extension/` → `extension/stage/socrates-the-cat-0.1.1-win32-x64.vsix`.
 
 - **Native tests (2026-10-25)** — Standard `#[test]` discovery restored; optional `habitat-unit-tests` feature + `habitat_unit` binary bypass a **local** loader failure (`cargo test` executable imports `userenv.dll`; exact cause unresolved). **31 checks** passed via fallback runner; `cargo test --lib` still fails at load on this machine.
 - **Phase 7 cleanup** — close native mutex handles on duplicate/error paths, free SID strings on conversion errors, flush the journal from Tauri's exit event, and compile the fallback-only helper only with its feature. Pipe connection failures/cancellation now clean up listeners and sockets, connections have a deadline, Start attempts clear on every outcome, and packaging clears old compiled extension output before rebuilding. No new dependencies.

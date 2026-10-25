@@ -2,11 +2,14 @@
   "name": "socrates-the-cat",
   "displayName": "Socrates the Cat",
   "description": "A desktop cat that walks real tab strips, panel edges, and status bar in VS Code (Windows). Click-through overlay; pick up and move. Start, stop, and diagnostics for the native companion.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "GeneralChromodynamics",
   "icon": "media/icon.png",
   "license": "MIT",
-  "homepage": "https://github.com/NCbeebs/Socrates-The-Cat#vs-code-extension-in-development",
+  "homepage": "https://generalchromodynamics.com/",
+  "sponsor": {
+    "url": "https://buymeacoffee.com/generalchromodynamics"
+  },
   "bugs": {
     "url": "https://github.com/NCbeebs/Socrates-The-Cat/issues"
   },

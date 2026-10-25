@@ -79,7 +79,7 @@ More diagnostics: [GitHub README - troubleshooting](https://github.com/NCbeebs/S
 
 ## Privacy
 
-No extension telemetry. Diagnostics read the local named pipe and print paths/status to an output channel only. The native companion reads IDE layout via UI Automation (geometry only, not editor text). Review logs and recordings before sharing them. See [SUPPORT.md](SUPPORT.md).
+No extension telemetry. Diagnostics read the local named pipe and print paths/status to an output channel only. The native companion reads IDE layout via UI Automation (geometry only, not editor text). Review logs and recordings before sharing them.
 
 ## License and contact
 
@@ -87,31 +87,6 @@ The extension package is **MIT** ([LICENSE](LICENSE)). Cat artwork and animation
 
 **General Chromodynamics** - [generalchromodynamics.com](https://generalchromodynamics.com/) · [generalchromodynamics@protonmail.com](mailto:generalchromodynamics@protonmail.com)
 
-## Native binary signing (release policy)
+Optional support for development: [Buy Me a Coffee](https://buymeacoffee.com/generalchromodynamics). Tips are voluntary; source and artwork stay under the licenses above.
 
-| Stage | Policy |
-|-------|--------|
-| **Local VSIX / beta** | **Unsigned** `companion.exe` inside the VSIX (current build). Windows may show SmartScreen or "unknown publisher" on first run; users install via **Install from VSIX** at their own discretion. |
-| **Before broad Marketplace promotion** | Plan **Authenticode** signing for `companion.exe` (timestamped). Revisit cost, certificate storage, and CI signing before claiming a signed build in the listing. |
-| **Extension package** | Marketplace distributes the VSIX; no separate signing step for the TypeScript host beyond Marketplace hosting. |
-
-## Marketplace publication (maintainers - not automated)
-
-**Do not publish until Phase 7 cleanup and explicit project owner approval.**
-
-1. **Publisher:** [Create or verify](https://marketplace.visualstudio.com/manage) publisher **`GeneralChromodynamics`** (must match `package.json`).
-2. **PAT:** Azure DevOps personal access token with **Marketplace → Manage** scope ([docs](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)).
-3. **Login (one machine):** from `extension/`, `npx @vscode/vsce login GeneralChromodynamics` - store token locally via `vsce`; **never commit tokens**.
-4. **Assets:** bundled `media/icon.png` (PNG ≥128×128) and `"icon"` in `package.json`. Listing GIFs use **GitHub raw URLs** in this README; optional local screenshots in [media/README.md](media/README.md).
-5. **Package:** `npm run package:win` → verify `extension/stage/bundle-manifest.json` sha256 matches bundled exe.
-6. **Publish (when authorized):** `npx @vscode/vsce publish --packagePath stage/socrates-the-cat-<version>-win32-x64.vsix` or `vsce publish` after version bump.
-
-Pre-release: `vsce publish --pre-release` is available for a limited Marketplace audience before default visibility.
-
-## Support
-
-See [SUPPORT.md](SUPPORT.md). Security: [generalchromodynamics@protonmail.com](mailto:generalchromodynamics@protonmail.com).
-
-## Marketplace status
-
-**Not published** - Phase 6 prep (metadata, icon, listing README) is in place; manual Marketplace upload/PAT checks and Phase 7 audit still required before public `vsce publish`.
+Report suspected security vulnerabilities privately to [generalchromodynamics@protonmail.com](mailto:generalchromodynamics@protonmail.com).
