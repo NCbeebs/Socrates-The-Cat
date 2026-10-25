@@ -70,18 +70,18 @@ export class ManagedSession {
     const attempt = this.beginStartAttempt();
     return this.enqueue(async () => {
       if (this.disposed || attempt.signal.aborted || this.socket) {
+        this.finishStartAttempt(attempt);
         return;
       }
       const signal = attempt.signal;
 
-      const exe = resolveCompanionExecutable(
-        this.options.extensionPath,
-        this.options.allowDevCompanionFallback,
-      );
-      this.companionPath = exe;
-
       let spawned: ChildProcess | null = null;
       try {
+        const exe = resolveCompanionExecutable(
+          this.options.extensionPath,
+          this.options.allowDevCompanionFallback,
+        );
+        this.companionPath = exe;
         const existing = await queryStatus(2_000, signal);
         this.assertStartStillValid(signal);
 
@@ -138,7 +138,6 @@ export class ManagedSession {
           this.assertStartStillValid(signal);
           this.lastStatus = attached.status ?? this.lastStatus;
           this.socket = socket;
-          this.finishStartAttempt(attempt);
           this.bindAttachedSocket(socket);
         } catch (error) {
           socket.destroy();
@@ -148,11 +147,12 @@ export class ManagedSession {
         if (this.child === spawned) {
           this.child = null;
         }
-        this.finishStartAttempt(attempt);
         if (error instanceof Error && error.message === "operation aborted") {
           return;
         }
         throw error;
+      } finally {
+        this.finishStartAttempt(attempt);
       }
     });
   }

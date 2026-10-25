@@ -1,6 +1,6 @@
 # VS Code extension: research and implementation tracker
 
-**Last updated:** 2026-10-25. **Repository baseline:** `7fd9514` (working tree may differ). **Status: Phase 6 prep complete (manual Marketplace validation pending)** — icon committed; listing GIFs via GitHub raw URLs; Phase 7 cleanup before public `vsce publish`; no Marketplace submit without explicit owner OK.
+**Last updated:** 2026-10-25. **Cleanup baseline:** `423f766` plus the working-tree Phase 7 changes below. **Status: Phase 7 code/artifact audit complete; final release gate pending.** Manual runtime and Marketplace validation remain open; no Marketplace submit without explicit owner OK.
 
 | Phase | Summary | Gate |
 |---|---|---|
@@ -9,10 +9,10 @@
 | 3 | `extension/` Start / Stop / Show Diagnostics | Passed |
 | 4 | `npm run package:win` → VSIX in `extension/stage/` | Passed (local install) |
 | 5 | Automated regressions + parity table | Passed (see gaps below) |
-| 6 | Release readiness, listing, docs | **Complete** (listing images pending) |
-| 7 | Final cleanup (release blocker) | **Not started** |
+| 6 | Release readiness, listing, docs | **Prep complete**; manual Marketplace checks pending |
+| 7 | Final cleanup (release blocker) | **Code/artifact audit complete**; manual runtime gates and standard Rust test loading remain open |
 
-**Resume here:** Phase 7 cleanup and final VSIX inspection, then capture `extension/media/*.png` before first `vsce publish`, then explicit authorization to publish.
+**Resume here:** Install the rebuilt VSIX identified in Phase 7 and complete the remaining manual runtime/release checks. Resolve or explicitly disposition the standard Rust loader failure and packaging-tool advisory before publication authorization. Existing listing GIFs still need verification from `main`; additional local screenshots are optional.
 
 **Pre-Marketplace gaps** (recorded in Phase 5 table): remote SSH/WSL UI placement, upgrade/uninstall with multiple windows, clean machine without build tools, formal CPU/timing caps, WebView2-missing UX.
 
@@ -423,20 +423,49 @@ Add focused tests for extension process ownership, launch validation, and recove
 
 **This is the final implementation phase and a release blocker.** No dead, orphaned, superseded, or unused implementation code may remain in the feature or its affected integration paths. Existing supported clone tooling remains live functionality and must not be misclassified as obsolete.
 
-- [ ] Review every added/edited file, function/export, command, setting, environment variable, dependency, native feature flag, build step, and test fixture. Each must have a current caller, consumer, or explicit framework contract.
-- [ ] Trace imports, Tauri command registrations, VS Code contributions, scripts, and assets end to end. Remove orphaned registrations and stale callers together.
-- [ ] Remove prototype clients, abandoned transports, duplicate launchers/renderers/journal writers, unused compatibility branches, disabled code, commented-out experiments, temporary assets, and obsolete scripts/configuration.
-- [ ] Remove unused dependencies/dev tools/native features. Delete only those proven unnecessary; update the relevant lockfile without unrelated upgrades.
-- [ ] Consolidate repeated checks only where doing so reduces total complexity. Avoid one-use abstraction layers, generic managers, speculative platform adapters, and a second copy of canonical artwork/configuration.
+- [x] Review every added/edited file, function/export, command, setting, environment variable, dependency, native feature flag, build step, and test fixture. Each must have a current caller, consumer, or explicit framework contract.
+- [x] Trace imports, Tauri command registrations, VS Code contributions, scripts, and assets end to end. Remove orphaned registrations and stale callers together.
+- [x] Remove prototype clients, abandoned transports, duplicate launchers/renderers/journal writers, unused compatibility branches, disabled code, commented-out experiments, temporary assets, and obsolete scripts/configuration.
+- [x] Remove unused dependencies/dev tools/native features. Delete only those proven unnecessary; update the relevant lockfile without unrelated upgrades.
+- [x] Consolidate repeated checks only where doing so reduces total complexity. Avoid one-use abstraction layers, generic managers, speculative platform adapters, and a second copy of canonical artwork/configuration.
 - [ ] Inspect all new resource owners: timers, listeners, output channels, pipes, OS handles, workers, pending requests, and generated files. Every normal/error/crash path must release, expire, or recover them.
-- [ ] Confirm the source tooling and source-only updater retain their supported workflow and behavior, with tests updated for any internal changes, while remaining excluded from installed extension execution. There must be only one updater path for each supported distribution.
-- [ ] Run existing TypeScript unused-symbol checks and native warnings/lints appropriate to touched code. Record pre-existing unrelated findings separately; no broad warning suppressions or speculative deletions to get a green check.
-- [ ] Check that only justified new files remain and existing responsibility owners were edited where possible. Remove empty scaffolding, duplicate docs, and TODO-only interfaces.
-- [ ] Rebuild from a clean staging directory; re-inspect the final VSIX to prove excluded/generated leftovers are gone.
+- [x] Confirm the source tooling and source-only updater retain their supported workflow and behavior, with tests updated for any internal changes, while remaining excluded from installed extension execution. There must be only one updater path for each supported distribution.
+- [x] Run existing TypeScript unused-symbol checks and native warnings/lints appropriate to touched code. Record pre-existing unrelated findings separately; no broad warning suppressions or speculative deletions to get a green check.
+- [x] Check that only justified new files remain and existing responsibility owners were edited where possible. Remove empty scaffolding, duplicate docs, and TODO-only interfaces.
+- [x] Rebuild from a clean staging directory; re-inspect the final VSIX to prove excluded/generated leftovers are gone.
 - [ ] Re-run tests and smoke checks affected by cleanup, including clone and installed-extension startup/shutdown. Preserve phase 5 evidence for unchanged behavior and revalidate where cleanup changes execution.
-- [ ] Review the final diff for scope, caller compatibility, source instructions, claims, links, and whitespace. Record completion evidence here.
+- [x] Review the final diff for scope, caller compatibility, source instructions, claims, links, and whitespace. Record completion evidence here.
 
 **Exit gate:** minimal reviewed diff, all source/extension gates passed, no unexplained leftovers, and a validated final artifact. Only then may an explicitly authorized publication occur. Record its URL/version afterward; publishing is not permission to skip cleanup.
+
+**Cleanup evidence (2026-10-25):** audited the four extension runtime modules, command contributions, development launch configuration, packaging script/ignore rules, native managed lifecycle and fallback runner, and their source-launcher/Tauri/asset integration points. Six Tauri command registrations match frontend consumers; three extension commands match their manifest contributions. Canonical artwork remains imported by Vite and embedded by Tauri; the installed extension invokes the bundled executable directly. No unused dependency/native feature was proven removable (`Win32_System_IO` is required by `ConnectNamedPipe`). Existing source tooling, the fallback test runner, directory placeholders, and distinct user/developer/release docs retain current purposes. No new files or dependencies were added during cleanup.
+
+Targeted edits close mutex handles on duplicate and startup-error paths, remove the redundant mutex reopen, free the converted SID allocation on all conversion outcomes, and express the security descriptor's lifetime guard without a warning suppression. Journal sign-off/flush now runs on Tauri's actual exit event. The fallback-only heuristic runner is feature-gated. Extension Start cleanup uses `finally`; failed/cancelled/timed-out connections remove their own listeners and destroy their socket. Packaging clears both `stage/` and compiled `out/` before `vscode:prepublish` rebuilds it.
+
+| Check | Phase 7 result |
+|---|---|
+| Companion `npm test` | **97/97 passed** (includes launcher, updater, and pet behavior) |
+| Companion `npm run build` | **Passed**, including configured unused-symbol checks and production sprite imports |
+| Extension `npm test` | **17/17 passed**, including four new connection cleanup/deadline regressions |
+| Extension `tsc --noEmit --noUnusedLocals --noUnusedParameters` | **Passed** |
+| Native `cargo check --locked --tests` | **Passed without warnings**; wrapper imports resolved |
+| Native opt-in fallback runner | **31 checks passed** |
+| Native `cargo test --locked --lib` | Compiles, then **fails at load with `0xC0000139`**; no standard-harness tests executed |
+| Fresh release and VSIX | **Passed**; native rebuilt with default features, then packaged from clean staging/output |
+| Extracted VSIX native/controller smoke | **Passed** with normal desktop access; details below |
+| Clone launcher `--help`; final diff whitespace | **Passed** |
+
+**Final artifact:** `extension/stage/socrates-the-cat-0.1.0-win32-x64.vsix`, **8,401,869 bytes**, 13 ZIP entries. Its `TargetPlatform` is `win32-x64`. The packaged executable is **10,966,016 bytes**, SHA-256 **`73bd188e6e7e87f629938b5f5e9c0d8875ba2c88a0d774564788a9af45df590b`**, matching both the fresh release and `bundle-manifest.json`. Contents are the VSIX metadata, manifest, README/changelog/support/license, icon, native executable, and exactly four runtime JavaScript modules. No TypeScript sources, source maps, tests, build scripts, node_modules, source updater, screenshot instructions, or stale compiled modules were included.
+
+The default `package:win` rebuilt the native release successfully but sandbox network access blocked extension `npm ci`. A normal-access `package:win:fast` retry completed the locked installation and VSIX packaging using that same fresh binary; this was not reuse of a pre-cleanup executable. The first sandboxed runtime attempt failed during WebView2 setup with `0x800700AA` (resource in use). Retrying with normal desktop access passed; no application workaround or WebView2 configuration change was made.
+
+**Live smoke scope:** extracted the actual VSIX into a temporary path containing spaces; ran its compiled controller and bundled executable. Verified readiness/status with two owners, duplicate native starter exit, one owner's disposal preserving the process beyond the grace interval, Stop causing actual process exit/pipe removal, subsequent Start, last-owner grace shutdown, and persisted journal sign-off. Temporary extraction/logs were removed and test-owned processes exited. This exercises real IPC/native behavior but does **not** replace installing the VSIX into actual VS Code windows, immediate Stop/Start stress, host-crash/upgrade/uninstall checks, cross-logon DACL denial, remote placement, or clone UI parity.
+
+**Existing packaging-tool advisory:** locked extension dev dependencies report two high-severity audit entries (`@azure/msal-node` and its dependent `@azure/identity`) for [GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5). These dependencies are absent from the VSIX. No lockfile upgrades were mixed into cleanup; review/remediate the publishing-tool dependency chain before using publication credentials.
+
+Resource ownership has been reviewed statically; the resource/crash-recovery and combined runtime gate above stay unchecked until the remaining crash, upgrade/uninstall, and real VS Code window checks are completed. This is deliberately separate from passing assertion suites.
+
+Documentation cross-check: [VS Code UI extension placement](https://code.visualstudio.com/api/advanced-topics/extension-host), [platform packaging, exclusions, and prepublish](https://code.visualstudio.com/api/working-with-extensions/publishing-extension), [Tauri exit events](https://docs.rs/tauri/latest/tauri/enum.RunEvent.html), and [Cargo opt-in features](https://doc.rust-lang.org/cargo/reference/features.html). The installed Tauri source also documents that `App::run` exits the process directly, so normal teardown cannot depend on statements after it.
 
 ## Open decisions and risks
 

@@ -100,36 +100,37 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-export function connectPipe(signal?: AbortSignal): Promise<net.Socket> {
+export function connectPipe(signal?: AbortSignal, timeoutMs = 8_000): Promise<net.Socket> {
   throwIfAborted(signal);
   return new Promise((resolve, reject) => {
     const socket = net.connect(pipePath());
     socket.setEncoding("utf8");
-    const onAbort = () => {
-      socket.destroy();
-      reject(new Error("operation aborted"));
-    };
-    if (signal) {
-      if (signal.aborted) {
-        socket.destroy();
-        reject(new Error("operation aborted"));
-        return;
-      }
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-    const onError = (error: Error) => {
+    const fail = (error: Error) => {
       cleanup();
+      socket.destroy();
       reject(error);
     };
-    const cleanup = () => {
-      socket.removeAllListeners();
-      signal?.removeEventListener("abort", onAbort);
-    };
-    socket.once("error", onError);
-    socket.once("connect", () => {
+    const onAbort = () => fail(new Error("operation aborted"));
+    const onClose = () => fail(new Error("pipe closed"));
+    const onConnect = () => {
       cleanup();
       resolve(socket);
-    });
+    };
+    const timer = setTimeout(() => fail(new Error("pipe connection timeout")), timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off("error", fail);
+      socket.off("close", onClose);
+      socket.off("connect", onConnect);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    socket.once("error", fail);
+    socket.once("close", onClose);
+    socket.once("connect", onConnect);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+    }
   });
 }
 
@@ -210,7 +211,7 @@ export async function queryStatus(
   throwIfAborted(signal);
   let socket: net.Socket | undefined;
   try {
-    socket = await connectPipe(signal);
+    socket = await connectPipe(signal, timeoutMs);
     const response = await exchangeOne(
       socket,
       { op: "status", protocol: PROTOCOL_VERSION },

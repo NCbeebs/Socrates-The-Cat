@@ -684,10 +684,17 @@ pub fn run() {
     let result = match app {
         Ok(app) => {
             app.run(move |_handle, event| {
-                if let tauri::RunEvent::ExitRequested { .. } = event {
-                    if let Some(session) = managed_session.as_mut() {
-                        managed_lifecycle::finalize_managed_session(session);
+                match event {
+                    tauri::RunEvent::ExitRequested { .. } => {
+                        if let Some(session) = managed_session.as_mut() {
+                            managed_lifecycle::finalize_managed_session(session);
+                        }
                     }
+                    tauri::RunEvent::Exit => {
+                        runtime_log::info("app", "stopped", "Socrates has signed off.");
+                        runtime_log::flush();
+                    }
+                    _ => {}
                 }
             });
             Ok(())
@@ -696,8 +703,6 @@ pub fn run() {
     };
     if let Err(error) = &result {
         runtime_log::error("app", "runtime_failed", &error.to_string());
-    } else {
-        runtime_log::info("app", "stopped", "Socrates has signed off.");
     }
     runtime_log::flush();
     result.expect("error while running tauri application");

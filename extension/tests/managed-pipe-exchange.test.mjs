@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
+import net from "node:net";
 import { test } from "node:test";
 
-import { exchangeOne } from "../out/managed-pipe.js";
+import { connectPipe, exchangeOne } from "../out/managed-pipe.js";
 
-/** Minimal net.Socket stand-in for exchangeOne unit tests (no live named pipe). */
+/** Socket stand-in for connection and exchange checks (no live named pipe). */
 class MockPipeSocket extends EventEmitter {
   written = "";
+  destroyed = false;
 
   setEncoding() {}
 
@@ -15,10 +17,56 @@ class MockPipeSocket extends EventEmitter {
     return true;
   }
 
-  off(event, handler) {
-    this.removeListener(event, handler);
+  destroy() {
+    this.destroyed = true;
   }
 }
+
+test("connectPipe abort destroys the pending socket and removes its listeners", async (t) => {
+  const socket = new MockPipeSocket();
+  t.mock.method(net, "connect", () => socket);
+  const controller = new AbortController();
+  const promise = connectPipe(controller.signal);
+  controller.abort();
+  await assert.rejects(promise, /aborted/);
+  assert.equal(socket.destroyed, true);
+  assert.deepEqual(socket.eventNames(), []);
+  assert.deepEqual(getEventListeners(controller.signal, "abort"), []);
+});
+
+test("connectPipe times out and destroys a connection that never completes", async (t) => {
+  const socket = new MockPipeSocket();
+  t.mock.method(net, "connect", () => socket);
+  await assert.rejects(connectPipe(undefined, 20), /connection timeout/);
+  assert.equal(socket.destroyed, true);
+  assert.deepEqual(socket.eventNames(), []);
+});
+
+test("connectPipe error releases socket and abort listener", async (t) => {
+  const socket = new MockPipeSocket();
+  t.mock.method(net, "connect", () => socket);
+  const controller = new AbortController();
+  const promise = connectPipe(controller.signal);
+  socket.emit("error", new Error("connection refused"));
+  await assert.rejects(promise, /connection refused/);
+  assert.equal(socket.destroyed, true);
+  assert.deepEqual(getEventListeners(controller.signal, "abort"), []);
+});
+
+test("connectPipe success preserves unrelated listeners and transfers socket ownership", async (t) => {
+  const socket = new MockPipeSocket();
+  const onClose = () => {};
+  socket.on("close", onClose);
+  t.mock.method(net, "connect", () => socket);
+  const controller = new AbortController();
+  const promise = connectPipe(controller.signal);
+  socket.emit("connect");
+  assert.equal(await promise, socket);
+  controller.abort();
+  assert.equal(socket.destroyed, false);
+  assert.deepEqual(socket.listeners("close"), [onClose]);
+  assert.deepEqual(getEventListeners(controller.signal, "abort"), []);
+});
 
 test("exchangeOne accepts a response split across chunks", async () => {
   const socket = new MockPipeSocket();

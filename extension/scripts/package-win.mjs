@@ -1,7 +1,7 @@
 /**
  * Phase 4 Windows VSIX pipeline: validate release companion.exe, stage under extension/stage/,
  * copy native binary into extension/bin/win32-x64/, compile, and run vsce for win32-x64.
- * Does not publish; safe-clean only extension/stage/ (never the repo root or companion target/).
+ * Does not publish; cleans only extension/stage/ and extension/out/ before packaging.
  */
 
 import { createHash } from "node:crypto";
@@ -97,16 +97,16 @@ function runVsce(commandArgs, cwd) {
   run(process.execPath, [vsceEntry, ...commandArgs], cwd);
 }
 
-function safeCleanStage() {
-  const resolved = path.resolve(STAGE_DIR);
+function cleanPackagingOutputs() {
   const extensionResolved = path.resolve(EXTENSION_DIR);
-  if (!resolved.startsWith(extensionResolved + path.sep)) {
-    fail("refusing to clean stage outside extension/");
-  }
-  if (fs.existsSync(resolved)) {
+  for (const directory of [STAGE_DIR, path.join(EXTENSION_DIR, "out")]) {
+    const resolved = path.resolve(directory);
+    if (!resolved.startsWith(extensionResolved + path.sep)) {
+      fail("refusing to clean generated files outside extension/");
+    }
     fs.rmSync(resolved, { recursive: true, force: true });
   }
-  fs.mkdirSync(resolved, { recursive: true });
+  fs.mkdirSync(STAGE_DIR, { recursive: true });
 }
 
 function assertPe64(exePath) {
@@ -171,7 +171,7 @@ if (size < 1_000_000) {
 }
 assertPe64(RELEASE_EXE);
 
-safeCleanStage();
+cleanPackagingOutputs();
 fs.mkdirSync(BIN_DIR, { recursive: true });
 fs.copyFileSync(RELEASE_EXE, BUNDLED_EXE);
 

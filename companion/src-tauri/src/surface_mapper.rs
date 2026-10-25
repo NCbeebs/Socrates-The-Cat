@@ -780,6 +780,7 @@ mod imp {
             assert!(v_generic);
         }
 
+        #[cfg(feature = "habitat-unit-tests")]
         pub(crate) fn run_all() {
             sash_thickness_includes_vscode_default();
             editor_tab_beats_activity_bar_tab();

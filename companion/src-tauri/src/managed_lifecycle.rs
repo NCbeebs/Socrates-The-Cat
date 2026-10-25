@@ -117,7 +117,7 @@ pub fn mark_runtime_ready() {
 
 /// Interrupt pipe accept and release mutex without blocking the main thread (Tauri exit path).
 pub fn finalize_managed_session(session: &mut ManagedSession) {
-    begin_control_plane_shutdown("Application exit.");
+    begin_control_plane_shutdown();
     session.release_mutex();
 }
 
@@ -152,7 +152,7 @@ impl ManagedSession {
     }
 
     fn shutdown_server(&mut self) {
-        begin_control_plane_shutdown("Managed session teardown.");
+        begin_control_plane_shutdown();
         if let Some(server) = self.server.take() {
             thread::spawn(move || {
                 let _ = server.join();
@@ -168,7 +168,7 @@ impl Drop for ManagedSession {
     }
 }
 
-fn begin_control_plane_shutdown(_reason: &'static str) {
+fn begin_control_plane_shutdown() {
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
     wakeup_pipe_accept();
 }
@@ -188,6 +188,9 @@ enum ManagedLaunchError {
 fn try_begin_server_session() -> Result<ManagedSession, ManagedLaunchError> {
     let mutex = create_session_mutex()?;
     if !mutex.we_own {
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(mutex.handle);
+        }
         if wait_for_existing_server() {
             return Err(ManagedLaunchError::Duplicate);
         }
@@ -196,11 +199,12 @@ fn try_begin_server_session() -> Result<ManagedSession, ManagedLaunchError> {
                 .into(),
         ));
     }
-    let server = spawn_pipe_server()?;
-    Ok(ManagedSession {
+    let mut session = ManagedSession {
         mutex: Some(mutex.handle),
-        server: Some(server),
-    })
+        server: None,
+    };
+    session.server = Some(spawn_pipe_server()?);
+    Ok(session)
 }
 
 struct MutexOpenResult {
@@ -210,7 +214,6 @@ struct MutexOpenResult {
 
 fn create_session_mutex() -> Result<MutexOpenResult, ManagedLaunchError> {
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::CreateMutexW;
     use windows::Win32::Foundation::WIN32_ERROR;
 
@@ -227,27 +230,10 @@ fn create_session_mutex() -> Result<MutexOpenResult, ManagedLaunchError> {
     };
     let already_exists = unsafe { windows::Win32::Foundation::GetLastError() }
         == WIN32_ERROR(183); // ERROR_ALREADY_EXISTS
-    if already_exists {
-        unsafe {
-            let _ = CloseHandle(handle);
-        }
-        let wide = wide_null(&name);
-        let handle = unsafe { CreateMutexW(None, false, PCWSTR(wide.as_ptr())) };
-        match handle {
-            Ok(h) => Ok(MutexOpenResult {
-                handle: h,
-                we_own: false,
-            }),
-            Err(e) => Err(ManagedLaunchError::Failed(format!(
-                "CreateMutexW (open) failed: {e}"
-            ))),
-        }
-    } else {
-        Ok(MutexOpenResult {
-            handle,
-            we_own: true,
-        })
-    }
+    Ok(MutexOpenResult {
+        handle,
+        we_own: !already_exists,
+    })
 }
 
 fn wait_for_existing_server() -> bool {
@@ -816,8 +802,8 @@ impl Drop for OwnedSecurityDescriptor {
 }
 
 struct PipeSecurityContext {
-    #[allow(dead_code)]
-    descriptor: OwnedSecurityDescriptor,
+    // Keep the descriptor alive while SECURITY_ATTRIBUTES borrows its allocation.
+    _descriptor: OwnedSecurityDescriptor,
     attributes: windows::Win32::Security::SECURITY_ATTRIBUTES,
 }
 
@@ -848,7 +834,7 @@ fn build_pipe_security_context() -> Result<PipeSecurityContext, String> {
         bInheritHandle: windows::core::BOOL(0),
     };
     Ok(PipeSecurityContext {
-        descriptor: owned,
+        _descriptor: owned,
         attributes,
     })
 }
@@ -911,13 +897,13 @@ fn current_logon_sid_string() -> Result<String, String> {
             .map_err(|e| format!("ConvertSidToStringSidW: {e}"))?;
     }
     let sid = unsafe { sid_string.to_string() }
-        .map_err(|e| format!("logon SID string: {e}"))?;
+        .map_err(|e| format!("logon SID string: {e}"));
     unsafe {
         let _ = windows::Win32::Foundation::LocalFree(Some(
             windows::Win32::Foundation::HLOCAL(sid_string.0 as *mut _),
         ));
     }
-    Ok(sid)
+    sid
 }
 
 fn create_pipe_instance() -> Result<windows::Win32::Foundation::HANDLE, String> {
